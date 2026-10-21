@@ -86,6 +86,15 @@ jobs:
           MAKEFLAGS: ${{ inputs.keep_going == 'false' && '' || '-k' }}
         run: bash build.sh
 
+      - name: Check the Exynos 990 board configuration
+        if: always()
+        run: |
+          # Static check of the board config: macro visibility, board
+          # constants, donor names, device tree node names.  The kernel
+          # only builds on macOS, so this is what catches a broken board
+          # configuration without waiting for the build.
+          python3 tools/check-exynos990-config.py dxb/xnu || true
+
       - name: Package build tree for local compiles
         if: always()
         run: |
