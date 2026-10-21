@@ -91,10 +91,22 @@ Full list with sources: `docs/exynos990-hardware.md`.
 - `shim/exynos990/build.sh` — cross build + packaging.
 - `tools/mkadt_exynos990.py` — ADT generator (per model): GICv2, 8 CPUs,
   26 MHz timebase, DRAM 0x880000000 + 512 MiB, UFS node, display node.
+- `tools/exynos990-make-boot.sh` — the whole chain from the CI kernel to a
+  flashable `boot.img` (ADT → payload → loader → boot image).
+- `tools/exynos990-selftest.py` + `tools/mkfakekernel.py` — self test of
+  that chain without a phone: every field the loader reads at run time is
+  checked (Image header, ADT nodes, payload layout, RAM window against
+  `board.h`, boot image slots).  Green for all seven models.
+- `tools/check-exynos990-config.py` — static check of the XNU board
+  configuration (macro visibility, board constants, donor names, renamed
+  drivers, device tree node names).  The CI runs it next to the build,
+  because the kernel itself only builds on macOS.
 
 Local cross build of the loader: `bash shim/exynos990/build.sh` — builds
 clean with `aarch64-linux-gnu-gcc` (`-Wall -Wextra -Werror`), no absolute
 relocations, image ~44 KiB.
+
+Flashing procedure: `docs/exynos990-flash.md`.
 
 ## Phone results
 
@@ -124,11 +136,22 @@ _(none yet — milestone E1 has not been flashed)_
 
 ## Next action
 
-1. Flash the **loader-only** boot image to the phone's `boot` partition
-   (TWRP, backup first) and read the UART log: it prints the boot core's
-   MPIDR/MIDR, the GIC type, the interrupt lines and the UFS/GPT facts.
-   That log is what unblocks the remaining board values (boot MPIDR, the
-   real timer INTID, the DRAM banks, the USERDATA LBA).
-2. Build the full image once the XNU kernel exists: `shim/exynos990/make-boot.sh KERNEL boot.img`
-   (the kernel itself is built by the macOS CI).
-3. Read the exact SM-number off the About-phone screen and note it here.
+1. **Run the XNU build on the macOS CI.** The repository has no Actions run
+   yet (`total_count 0` in the API), so the workflow has to be started by
+   hand: GitHub → *Actions* → *xnu* → *Run workflow* (machine config
+   `EXYNOS990`).  Until that build is green, the XNU side of the port is
+   only verified statically (`tools/check-exynos990-config.py`).
+2. **Flash the boot image** (TWRP, backup the `boot` partition first) and
+   read the UART log: `tools/exynos990-make-boot.sh <kernel> z3s` builds
+   the image, `docs/exynos990-flash.md` has the procedure.  The log gives
+   the boot MPIDR, the GIC type, the timer frequency and the UFS
+   `prdt_stride` (16 = plain PRDT, 128 = FMP `DESCTYPE 3`).
+3. **Collect the board facts** with `tools/exynos990-collect.sh` in TWRP:
+   the DRAM banks (`/proc/iomem`), the timer PPI (`/proc/interrupts`),
+   the pstore/ramoops address and the partition list.  They fill
+   `SWEET_BOOT_MPIDR`, `SWEET_KLOG_PHYS` and the `dram-size` of the ADT.
+4. Read the exact SM-number off the About-phone screen and note it here.
+
+After that: E3 (UFS: the FMP descriptor path if `prdt_stride` is 128, and
+the read of USERDATA), E4 (DECON), E5 (touch), E6 (iOS root in USERDATA
+with the NativeUfs driver).
