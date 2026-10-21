@@ -1,0 +1,397 @@
+diff --git a/bsd/dev/a5xelte_keys.c b/bsd/dev/a5xelte_keys.c
+index dcbd143..5184e42 100644
+--- a/bsd/dev/a5xelte_keys.c
++++ b/bsd/dev/a5xelte_keys.c
+@@ -18,11 +18,10 @@
+ extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
+ extern void sweet_hid_key(int key, int down);
+ 
+-#if defined(DREAMLTE)
+-#define A5_ALIVE_PA 0x164b0000u            /* Exynos 8895 pinctrl ALIVE */
+-#else
+-#define A5_ALIVE_PA 0x139b0000u
+-#endif
++/* A5_ALIVE_PA (pinctrl ALIVE base) comes from the board header:
++ * 0x139b0000 on the Exynos 7580, 0x164b0000 on the Exynos 8895,
++ * 0x15850000 on the Exynos 990. */
++
+ #define A5_GPA2_CON 0x40u
+ #define A5_GPA2_DAT 0x44u
+ #define A5_GPA2_PUD 0x48u
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+index e70a4ce..bc0ede1 100644
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -84,7 +84,18 @@ extern void sweet_usb_probe(void);
+ #define EXYNOS_UFS              1
+ #define VS_UTRL_NEXUS_TYPE      0x40
+ #define UFS_WLUN_DEVICE         0xd0
++#if defined(EXYNOS990)
++/*
++ * Galaxy S20 family (Exynos 990 / universal9830) host.  Same UFSHCI
++ * standard registers and the same Exynos vendor block layout as the
++ * Exynos 8895 (TXPRDT_ENTRY 0x00, RXPRDT_ENTRY 0x04, UTRL_NEXUS_TYPE
++ * 0x40); only the base addresses differ and those come from the device
++ * tree (ufs: ufs@0x13100000 in exynos9830.dts), not from this file.
++ */
++#define UFS_ADT_NODE            "/exynos990-ufs"
++#else
+ #define UFS_ADT_NODE            "/dreamlte-ufs"
++#endif
+ #define UFS_DEFAULT_PART        "USERDATA"
+ #define PRDT_BYTES(field)       (field)
+ #else
+diff --git a/iokit/Kernel/arm/SweetCPU.cpp b/iokit/Kernel/arm/SweetCPU.cpp
+index 5bd24a7..453482c 100644
+--- a/iokit/Kernel/arm/SweetCPU.cpp
++++ b/iokit/Kernel/arm/SweetCPU.cpp
+@@ -17,7 +17,7 @@
+ #include <kern/thread.h>
+ #include <mach/mach_time.h>
+ #include <pexpert/pexpert.h>
+-#if defined(DREAMLTE)
++#if defined(DREAMLTE) || defined(EXYNOS990)
+ extern "C" vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
+ #endif
+ 
+@@ -87,7 +87,14 @@ SweetCPU::start(IOService *provider)
+ #if defined(A5XELTE)
+ 	/* Linux's Exynos7580 DT: logical 0..3 = MPIDR 0..3;
+ 	 * logical 4..7 = MPIDR 0x100..0x103. */
+-#if defined(DREAMLTE)
++#if defined(EXYNOS990)
++	/* Exynos 990 (universal9830), exynos9830.dts: logical 0..3 = Cortex-A55
++	 * (arm,ananke) MPIDR 0x000..0x003, logical 4..5 = Cortex-A76
++	 * (arm,enyo) MPIDR 0x004..0x005, logical 6..7 = Exynos M5 (arm,lion)
++	 * MPIDR 0x100..0x101. */
++	uint32_t expected_mpidr = cpu->cpu_id < 6 ? cpu->cpu_id :
++	    0x100U + cpu->cpu_id - 6;
++#elif defined(DREAMLTE)
+ 	/* Exynos 8895: logical 0..3 = A53 MPIDR 0x100..0x103 (boot cluster);
+ 	 * logical 4..7 = Mongoose M2 MPIDR 0..3. */
+ 	uint32_t expected_mpidr = cpu->cpu_id < 4 ? 0x100U + cpu->cpu_id :
+@@ -112,7 +119,18 @@ SweetCPU::start(IOService *provider)
+ 	if (!IOCPU::start(provider)) {
+ 		return false;
+ 	}
+-#if defined(A5XELTE)
++#if defined(EXYNOS990)
++	/* Exynos 990 clusters (exynos9830.dts cpu@ unit addresses): logical
++	 * 0..3 = Cortex-A55 (arm,ananke), 4..5 = Cortex-A76 (arm,enyo),
++	 * 6..7 = Exynos M5 (arm,lion). */
++	if (cpu->cpu_id < 4) {
++		cpuName = OSSymbol::withCStringNoCopy("Cortex-A55");
++	} else if (cpu->cpu_id < 6) {
++		cpuName = OSSymbol::withCStringNoCopy("Cortex-A76");
++	} else {
++		cpuName = OSSymbol::withCStringNoCopy("Exynos M5");
++	}
++#elif defined(A5XELTE)
+ 	cpuName = OSSymbol::withCStringNoCopy("Cortex-A53");
+ #else
+ 	cpuName = OSSymbol::withCStringNoCopy("Kryo 470");
+@@ -296,7 +314,7 @@ SweetCPU::startCPU(vm_offset_t start_paddr, vm_offset_t arg_paddr)
+ 	vm_offset_t entry = ml_static_vtop((vm_offset_t)&sweet_secondary_entry);
+ 	IOLog(CPU_PORT_NAME " CPU: cpu=%u CPU_ON target=0x%x entry_pa=0x%llx context=%u\n",
+ 	    getCPUNumber(), cpu->phys_id, (uint64_t)entry, getCPUNumber());
+-#if defined(DREAMLTE)
++#if defined(DREAMLTE) || defined(EXYNOS990)
+ 	{
+ 		/*
+ 		 * The entry is in the high RAM bank (0x88xxxxxxx); the loader probe
+@@ -320,7 +338,7 @@ SweetCPU::startCPU(vm_offset_t start_paddr, vm_offset_t arg_paddr)
+ 		entry = (vm_offset_t)tramp_pa;
+ 		static vm_offset_t pmu;
+ 		if (pmu == 0) {
+-			pmu = ml_io_map(0x16480000, 0x10000);
++			pmu = ml_io_map(A5_PMU_BASE, 0x10000);
+ 		}
+ 		uint32_t off = 0x2000 + (uint32_t)(((((cpu->phys_id >> 8) & 0xf) << 2) |
+ 		    (cpu->phys_id & 0xf)) * 0x80);
+diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
+index 57e6096..0ab2bf2 100644
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -45,6 +45,7 @@
+ #include <arm/cpu_data_internal.h>
+ #include <arm/misc_protos.h>
+ #include <pexpert/arm64/boot.h>
++#include <pexpert/arm64/board_config.h>
+ #include <pexpert/device_tree.h>
+ 
+ #include <libkern/kernel_mach_header.h>
+@@ -1905,7 +1906,7 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
+ #endif
+ 
+ 	// Slide the physical aperture to a random page-aligned location within the slide range
+-#if defined(DREAMLTE)
++#if defined(DREAMLTE) || defined(EXYNOS990)
+ 	uint64_t physmap_slide = 0;
+ #else
+ 	uint64_t physmap_slide = early_random() & ARM64_PHYSMAP_SLIDE_MASK & ~((uint64_t)PAGE_MASK);
+@@ -1913,7 +1914,7 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
+ 	assert(physmap_slide < ARM64_PHYSMAP_SLIDE_RANGE);
+ 
+ 	physmap_base += physmap_slide;
+-#if defined(DREAMLTE) && !XNU_MONITOR
++#if (defined(DREAMLTE) || defined(EXYNOS990)) && !XNU_MONITOR
+ 	physmap_base = ROUND_TWIG(physmap_base);
+ #endif
+ 
+@@ -2317,7 +2318,7 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
+ 	va_l1 = dynamic_memory_begin;
+ 	va_l1_end = va_l1 + ((2 + (mem_segments * 10)) << 20);
+ 	va_l1_end += round_page(args->Video.v_height * args->Video.v_rowBytes);
+-#if defined(DREAMLTE)
++#if defined(A5_HAS_FB) && A5_HAS_FB
+ 	va_l1_end += round_page((vm_size_t)A5_FB_STRIDE * A5_FB_HEIGHT) + (64ULL << 20);
+ #endif
+ 	va_l1_end = (va_l1_end + 0x00000000007FFFFFULL) & 0xFFFFFFFFFF800000ULL;
+diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
+index 1606c91..19376b1 100644
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -515,12 +515,14 @@ LEXT(start_first_cpu)
+ 	mov		x20, x0
+ 	mov		x21, #0
+ 
+-#if defined(A5XELTE)
++#if defined(A5XELTE) && (A5_ENTRY_MARKER_PHYS) != 0
+ 	/* Earliest XNU-owned physical marker in preserved Samsung log RAM. */
+ 	MOV64	x10, A5_ENTRY_MARKER_PHYS
+ 	MOV64	x11, 0x3145544c45554e58
+ 	str		x11, [x10]
+ 	dsb		sy
++#endif
++#if defined(A5XELTE) && A5_HAS_FB
+ 	/* XNU-owned green entry block on the Exynos DECON scanout buffer. */
+ 	MOV64	x10, (A5_FB_PHYS + 88 * A5_FB_STRIDE + 240 * 4)
+ 	MOV64	x11, 0xff00ff00
+@@ -709,7 +711,7 @@ Lkernelcache_base_found:
+ 	lsr		x5,  x24, #(ARM_TT_L2_SHIFT)
+ 	create_bootstrap_mapping x14, x15, x5, x3, x2, x9, x10, x11, x12, x13
+ 
+-#if defined(A5XELTE)
++#if defined(A5XELTE) && A5_HAS_FB
+ 	/* A5_FB_2M_BLOCKS 2 MiB blocks map the scanout buffer VA=PA.
+ 	 * Its L1 index differs from isolated XNU RAM, so this uses one extra
+ 	 * bootstrap L2 page. Mark it write-combined for DECON DMA visibility. */
+@@ -890,7 +892,7 @@ common_start:
+ 	MSR_SCTLR_EL1_X0
+ 	isb		sy
+ 
+-#if defined(A5XELTE)
++#if defined(A5XELTE) && A5_HAS_FB
+ 	/* Blue block: the 4 KiB MMU is active and the framebuffer alias works. */
+ 	MOV64	x10, (A5_FB_PHYS + 120 * A5_FB_STRIDE + 240 * 4)
+ 	MOV64	x11, 0xff0000ff
+@@ -934,7 +936,7 @@ La5_mmu_pixel:
+ 	msr		CPACR_EL1, x0
+ #endif
+ 
+-#if defined(A5XELTE)
++#if defined(A5XELTE) && A5_HAS_FB
+ 	/* fp_enabled: write directly to the DECON scanout alias. */
+ 	MOV64	x10, (A5_FB_PHYS + 152 * A5_FB_STRIDE + 240 * 4)
+ 	MOV64	x11, 0xff00ffff
+diff --git a/pexpert/arm/pe_serial.c b/pexpert/arm/pe_serial.c
+index 1966bdd..7407489 100644
+--- a/pexpert/arm/pe_serial.c
++++ b/pexpert/arm/pe_serial.c
+@@ -721,7 +721,7 @@ static volatile uint32_t *fbcon_base;
+ static uint32_t fbcon_width, fbcon_height, fbcon_stride;
+ static uint32_t fbcon_cols, fbcon_rows, fbcon_col, fbcon_row;
+ 
+-#if defined(DREAMLTE)
++#if defined(A5_HAS_KLOG) && A5_HAS_KLOG
+ /*
+  * Copy of the console in TWRP's ramoops pmsg zone, in persistent_ram
+  * format (sig "DBGC", start, size, ring data), appended to the loader's
+@@ -739,7 +739,14 @@ static void klog_putc(uint8_t c);
+ static void
+ klog_init(void)
+ {
+-	klog_hdr = (volatile uint32_t *)ml_io_map(A5_KLOG_PHYS, A5_KLOG_SIZE);
++	vm_offset_t base = A5_KLOG_PHYS;
++	/* The sink address can be overridden at run time ("sweetklog=0x...",
++	 * hex accepted) so it can be moved without rebuilding the kernel. */
++	PE_parse_boot_argn("sweetklog", &base, sizeof(base));
++	if (base == 0) {
++		return;
++	}
++	klog_hdr = (volatile uint32_t *)ml_io_map(base, A5_KLOG_SIZE);
+ 	if (klog_hdr == NULL) {
+ 		return;
+ 	}
+@@ -814,7 +821,7 @@ fbcon_transmit_ready(void)
+ static void
+ fbcon_transmit_data(uint8_t c)
+ {
+-#if defined(DREAMLTE)
++#if defined(A5_HAS_KLOG) && A5_HAS_KLOG
+ 	klog_putc(c);
+ #endif
+ 	if (c == '\r') {
+@@ -896,9 +903,6 @@ fbcon_probe(void)
+ 	}
+ 	sweet_early_mark(17, "fbcon config read; mapping");
+ 	fbcon_base = (volatile uint32_t *)ml_io_map_wcomb(reg[0], reg[1]);
+-#if defined(DREAMLTE)
+-	klog_init();
+-#endif
+ 	sweet_early_mark(18, "fbcon mapping returned");
+ 	if (fbcon_base != NULL) {
+ 		register_serial_functions(&sweet_fbcon_serial_functions);
+@@ -986,6 +990,11 @@ serial_init(void)
+ 	PE_parse_boot_argn("disable-uart-irq", &disable_uart_irq, sizeof(disable_uart_irq));
+ 
+ 	fbcon_probe();
++#if defined(A5_HAS_KLOG) && A5_HAS_KLOG
++	/* The klog sink does not need a framebuffer: it is plain RAM that
++	 * the loader and the kernel append to. */
++	klog_init();
++#endif
+ 
+ #ifdef PI3_UART
+ 	if (SecureDTFindEntry("name", "gpio", &entryP) == kSuccess) {
+diff --git a/pexpert/pexpert/arm64/A5XELTE.h b/pexpert/pexpert/arm64/A5XELTE.h
+index b6f812d..b66d26f 100644
+--- a/pexpert/pexpert/arm64/A5XELTE.h
++++ b/pexpert/pexpert/arm64/A5XELTE.h
+@@ -1,4 +1,16 @@
+-/* Samsung Galaxy A5 (2016), SM-A510F: Exynos 7580, Cortex-A53. */
++/* Samsung board header for this tree.
++ *
++ * main builds the Exynos 990 (Galaxy S20 family).  The A5XELTE machine
++ * config is reused from the Galaxy A5 (Exynos 7580) port because it is the
++ * smallest donor that already carries the Samsung boot chain, the GICv2
++ * interrupt path and the 4 KiB page setup; every board fact below is the
++ * one of the selected board.
++ *
++ * Board selection:
++ *   A5_BOARD_A5XELTE    Galaxy A5 (2016), Exynos 7580
++ *   A5_BOARD_DREAMLTE   Galaxy S8, Exynos 8895
++ *   A5_BOARD_EXYNOS990  Galaxy S20 family, Exynos 990   (default)
++ */
+ #ifndef _PEXPERT_ARM64_A5XELTE_H
+ #define _PEXPERT_ARM64_A5XELTE_H
+ 
+@@ -20,17 +32,75 @@
+ #define __ARM_V8_CRYPTO_EXTENSIONS__  1
+ #define __ARM_PAN_AVAILABLE__         0
+ 
+-/* Exynos7580 has a GICv2 distributor and CPU interface, not GICv3. */
++/* Exynos GICv2 distributor and CPU interface, not GICv3. */
+ #define HAS_GIC_V3                    0
+-#define A5XELTE_VTIMER_INTID         27
+ 
++#if defined(A5_BOARD_A5XELTE)
++#define A5_BOARD_SEL_A5XELTE          1
++#define A5_BOARD_SEL_DREAMLTE         0
++#define A5_BOARD_SEL_EXYNOS990        0
++#elif defined(A5_BOARD_DREAMLTE)
++#define A5_BOARD_SEL_A5XELTE          0
++#define A5_BOARD_SEL_DREAMLTE         1
++#define A5_BOARD_SEL_EXYNOS990        0
++#else
++#define A5_BOARD_SEL_A5XELTE          0
++#define A5_BOARD_SEL_DREAMLTE         0
++#define A5_BOARD_SEL_EXYNOS990        1
++#endif
++
++#if A5_BOARD_SEL_EXYNOS990
++#define EXYNOS990                     1
++#elif A5_BOARD_SEL_DREAMLTE
++#define DREAMLTE                      1
++#endif
++
++#if A5_BOARD_SEL_EXYNOS990
++/*
++ * Exynos 990 board facts.
++ *
++ * SoC: Exynos 990 (universal9830), Cortex-A55 x4 + Cortex-A76 x2 +
++ * Exynos M5 x2, GIC-400, 26 MHz architected timer, UFS 3.0 at
++ * 0x13100000, USI debug UART at 0x10540000, DECON/DSIM display.
++ *
++ * The Exynos GIC implements only the 16 local SGIs, so its PPI window
++ * starts at INTID 16: PPI n is INTID 16 + n.  The physical timer is
++ * PPI 14 = INTID 30 (the A5XELTE port used INTID 27 for the Exynos 7580
++ * PPI 11, the S8 port INTID 30 for the Exynos 8895 PPI 14).  The EL1
++ * virtual timer does not reach the secondary cores on Exynos, so the
++ * physical timer is used.
++ *
++ * The board facts that are not known yet are set to "off" instead of to
++ * a guess: the DECON handoff does not exist for this SoC yet, so there is
++ * no framebuffer (A5_FB_PHYS 0 compiles out every framebuffer writer),
++ * no log RAM address and no keys or touch controller.  The loader prints
++ * the real boot MPIDR and the log sink address is read off the phone
++ * (see EXYNOS990_PROGRESS.md).
++ */
++#define A5_FB_PHYS                    0           /* no DECON handoff yet */
++#define A5_FB_WIDTH                   1440
++#define A5_FB_HEIGHT                  3200
++#define A5_FB_STRIDE                  5760        /* bytes per row */
++#define A5_FB_2M_BLOCKS               0
++#define A5_ENTRY_MARKER_PHYS          0           /* no log RAM known yet */
++#define A5_BOOT_MPIDR                 0           /* TBC: the loader prints it */
++#define A5_KEYS_DEFAULT               0           /* per-model GPIO keys unknown */
++#define A5_TOUCH_DEFAULT              0           /* no 990 touch controller yet */
++#define A5_KLOG_PHYS                  0           /* TBC: TWRP pmsg address */
++#define A5_KLOG_SIZE                  0x80000
++#define A5_USE_PHYS_TIMER             1
++#undef A5XELTE_VTIMER_INTID
++#define A5XELTE_VTIMER_INTID         30
++/* Exynos 990 system controller (pmu_system_controller in exynos9830.dts). */
++#define A5_PMU_BASE                   0x15860000
++/* Exynos 990 pinctrl ALIVE (pinctrl_0 in exynos9830.dts). */
++#define A5_ALIVE_PA                   0x15850000
++#elif A5_BOARD_SEL_DREAMLTE
+ /*
+  * Samsung Galaxy S8 (SM-G950F, dreamlte, Exynos 8895) build of this port.
+  * Same Samsung S-Boot handoff, GIC-400, 26 MHz timer and Cortex-A53 boot
+  * cluster as the A5; the board facts that differ are below.
+  */
+-#define DREAMLTE                      1
+-#if defined(DREAMLTE)
+ #define A5_FB_PHYS                    0xcc000000  /* s3cfb.bootloaderfb */
+ #define A5_FB_WIDTH                   1440
+ #define A5_FB_HEIGHT                  2960
+@@ -49,6 +119,10 @@
+ #define A5_USE_PHYS_TIMER             1
+ #undef A5XELTE_VTIMER_INTID
+ #define A5XELTE_VTIMER_INTID         30
++/* Exynos 8895 system controller (pmu in exynos8895.dts). */
++#define A5_PMU_BASE                   0x16480000
++/* Exynos 8895 pinctrl ALIVE. */
++#define A5_ALIVE_PA                   0x164b0000
+ #else
+ #define A5_FB_PHYS                    0x67000000
+ #define A5_FB_WIDTH                   1080
+@@ -59,6 +133,27 @@
+ #define A5_BOOT_MPIDR                 0
+ #define A5_KEYS_DEFAULT               1
+ #define A5_TOUCH_DEFAULT              1
++#define A5_PMU_BASE                   0           /* unused on the A5 */
++#define A5_ALIVE_PA                   0x139b0000  /* Exynos 7580 pinctrl ALIVE */
++#endif
++
++/* A framebuffer exists only when the board has a scanout buffer to draw
++ * on; the Exynos 990 has no DECON handoff yet, so A5_FB_PHYS is 0 there
++ * and every framebuffer writer (start.s, sweet_early, fbcon) is compiled
++ * out.  A klog sink exists only when its RAM address is known. */
++#if (A5_FB_PHYS) != 0
++#define A5_HAS_FB                     1
++#else
++#define A5_HAS_FB                     0
++#endif
++#ifdef A5_KLOG_PHYS
++#if (A5_KLOG_PHYS) != 0
++#define A5_HAS_KLOG                   1
++#else
++#define A5_HAS_KLOG                   0
++#endif
++#else
++#define A5_HAS_KLOG                   0
+ #endif
+ 
+ #ifndef ASSEMBLER
