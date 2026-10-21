@@ -10,7 +10,7 @@ on:
         description: RELEASE / DEVELOPMENT / DEBUG
         default: DEVELOPMENT
       machine_config:
-        description: xnu MACHINE_CONFIG
+        description: xnu MACHINE_CONFIG (A5XELTE board header, board selected inside it)
         default: A5XELTE
       keep_going:
         description: make -k (collect all compile errors in one run)
@@ -50,10 +50,13 @@ jobs:
           cp xnu/patches/*.patch xnu/patches/*.sh dxb/patches/
           # libfirehose_kernel is built arm64e-only; the SWEET kernel is plain arm64
           if [ "$MACHINE_CONFIG" = A5XELTE ]; then
-            # Cortex-A53 (Exynos7580 / Exynos8895) is ARMv8.0: Xcode's default
-            # arm64 code generation emits LSE atomics (ldadd/cas) that trap as
+            # Cortex-A53 (Exynos7580 / Exynos8895) and the Exynos 990 boot
+            # cluster are ARMv8.0-compatible: Xcode's default arm64 code
+            # generation emits LSE atomics (ldadd/cas) that trap as
             # "Undefined kernel instruction" right after "Firehose configured"
             # (S8 boot 2). Same flags as tools/a5xelte-build-firehose.sh.
+            # The Exynos 990 (A55/A76/M5) implements LSE, but the boot core
+            # that runs this code may be an A55, so keep the ARMv8.0 flags.
             sed -i '' "s/ARCHS=\"x86_64 arm64e\" VALID_ARCHS=\"x86_64 arm64e\"/ARCHS=arm64 VALID_ARCHS=arm64 OTHER_CFLAGS='-mkernel -nostdinc -Wno-packed -mcpu=cortex-a53 -march=armv8-a+crypto'/" dxb/build.sh
             grep -c "VALID_ARCHS=arm64 OTHER_CFLAGS='-mkernel -nostdinc -Wno-packed -mcpu=cortex-a53" dxb/build.sh
           else
