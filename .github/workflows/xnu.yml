@@ -10,8 +10,8 @@ on:
         description: RELEASE / DEVELOPMENT / DEBUG
         default: DEVELOPMENT
       machine_config:
-        description: xnu MACHINE_CONFIG (A5XELTE board header, board selected inside it)
-        default: A5XELTE
+        description: xnu MACHINE_CONFIG (EXYNOS990 = Galaxy S20 family, A5XELTE = donor)
+        default: EXYNOS990
       keep_going:
         description: make -k (collect all compile errors in one run)
         default: "true"
@@ -30,7 +30,7 @@ env:
   DXB_SHA: 663906528d1cd5ea8fde7de6f16de73db9511549
   MACOS_VERSION: ${{ inputs.macos_version || '13.5' }}
   KERNEL_CONFIG: ${{ inputs.kernel_config || 'DEVELOPMENT' }}
-  MACHINE_CONFIG: ${{ inputs.machine_config || 'A5XELTE' }}
+  MACHINE_CONFIG: ${{ inputs.machine_config || 'EXYNOS990' }}
 
 jobs:
   build:
@@ -49,7 +49,7 @@ jobs:
           # 12.5-14.3 use the top-level patches dir; ours go next to blacktop's
           cp xnu/patches/*.patch xnu/patches/*.sh dxb/patches/
           # libfirehose_kernel is built arm64e-only; the SWEET kernel is plain arm64
-          if [ "$MACHINE_CONFIG" = A5XELTE ]; then
+          if [ "$MACHINE_CONFIG" = A5XELTE ] || [ "$MACHINE_CONFIG" = EXYNOS990 ]; then
             # Cortex-A53 (Exynos7580 / Exynos8895) and the Exynos 990 boot
             # cluster are ARMv8.0-compatible: Xcode's default arm64 code
             # generation emits LSE atomics (ldadd/cas) that trap as
