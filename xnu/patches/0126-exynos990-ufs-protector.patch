@@ -1,0 +1,45 @@
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+index 6de1613..3b1465f 100644
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -84,6 +84,9 @@ extern void sweet_usb_probe(void);
+  */
+ #define EXYNOS_UFS              1
+ #define VS_UTRL_NEXUS_TYPE      0x40
++/* UFS protector: UFSPRSECURITY holds the descriptor type in bits 20:19
++ * (DESCTYPE 3 = the FMP descriptor of the secure monitor). */
++#define UFP_UFSPRSECURITY       0x10
+ #define UFS_WLUN_DEVICE         0xd0
+ #if defined(EXYNOS990)
+ /*
+@@ -141,6 +144,7 @@ struct ucd {
+ static struct {
+ 	vm_offset_t regs;
+ 	vm_offset_t vs_regs;                    /* Exynos vendor HCI registers */
++	vm_offset_t prot_regs;                  /* UFS protector (FMP/SMU) registers */
+ 	vm_offset_t dma;                        /* kernel VA of the DMA allocation */
+ 	uint64_t dma_pa;
+ 	uint8_t lun;
+@@ -673,6 +677,22 @@ sweet_ufs_init(void)
+ 	su.regs = ml_io_map(reg[0], reg[1]);
+ #if defined(EXYNOS_UFS)
+ 	su.vs_regs = ml_io_map(reg[2], reg[3]);
++	/* The UFS protector block: UFSPRSECURITY holds the descriptor type
++	 * the host expects.  DESCTYPE 3 means 128 byte PRDT entries (the FMP
++	 * descriptor of the secure monitor); the plain 16 byte entries this
++	 * driver builds are only valid below that. */
++	su.prot_regs = (size >= 6 * sizeof(uintptr_t)) ? ml_io_map(reg[4], reg[5]) : 0;
++	if (su.prot_regs) {
++		uint32_t sec = *(volatile uint32_t *)(su.prot_regs + UFP_UFSPRSECURITY);
++		uint32_t desctype = (sec >> 19) & 3;
++
++		printf("SWEET UFS: protector UFSPRSECURITY 0x%x desctype %u\n", sec, desctype);
++		if (desctype == 3) {
++			printf("SWEET UFS: host runs the FMP descriptor type, "
++			    "the plain PRDT path is not available\n");
++			return ENOTSUP;
++		}
++	}
+ #endif
+ 	if (kmem_alloc_contig(kernel_map, &su.dma, DMA_SIZE, PAGE_MASK, 0, 0,
+ 	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
