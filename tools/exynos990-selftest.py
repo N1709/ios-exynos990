@@ -129,11 +129,12 @@ def check_adt(model, tmp):
     check(ufs is not None, '/exynos990-ufs exists')
     if ufs is not None:
         reg = ufs.prop('reg')
-        check(reg is not None and len(reg) == 32, 'ufs reg has 2 ranges (HCI + vendor)')
-        if reg is not None:
-            hci, hci_size, vendor, vendor_size = struct.unpack('<4Q', reg)
+        check(reg is not None and len(reg) == 48, 'ufs reg has 3 ranges (HCI + vendor + protector)')
+        if reg is not None and len(reg) == 48:
+            hci, hci_size, vendor, vendor_size, prot, prot_size = struct.unpack('<6Q', reg)
             check(hci == 0x13100000, f'ufs HCI base 0x{hci:x}')
             check(vendor == 0x13101100, f'ufs vendor base 0x{vendor:x}')
+            check(prot == 0x132A0000, f'ufs protector base 0x{prot:x}')
     return blob, path
 
 

@@ -95,9 +95,12 @@ GICC_PHYS, GICC_SIZE = 0x10102000, 0x1000
 # with --timer-intid (27 = PPI 11 virtual, 30 = PPI 14 physical).
 VTIMER_INTID = 30
 
-# UFS host: standard HCI registers then the Exynos vendor HCI block.
+# UFS host: standard HCI registers then the Exynos vendor HCI block, then
+# the UFS protector (FMP/SMU).  The protector carries the descriptor type
+# (UFSPRSECURITY, DESCTYPE) the kernel needs to build its PRDT entries.
 UFS_HCI_BASE, UFS_HCI_SIZE = 0x13100000, 0x200
 UFS_VS_BASE, UFS_VS_SIZE = 0x13101100, 0x200
+UFS_PROT_BASE, UFS_PROT_SIZE = 0x132A0000, 0x100
 
 # --------------------------------------------------------------------------
 # Board list: board code -> panel facts
@@ -303,13 +306,13 @@ def build(model=DEFAULT_MODEL, canvas=None, dram_base=DRAM_BASE,
                      (mkadt.cstr('sweet-fbcon'), mkadt.cstr('sweet-ufs'))]
     # bsd/dev/sweet_ufs.c (A5XELTE config, EXYNOS_UFS) reads the node by
     # name and expects reg[0]/reg[1] = standard HCI registers,
-    # reg[2]/reg[3] = Exynos vendor HCI block (HCI_UTRL_NEXUS_TYPE etc.).
-    # NOTE: the driver currently looks for "/dreamlte-ufs"; the Exynos 990
-    # port needs a matching driver change to read this node.
+    # reg[2]/reg[3] = Exynos vendor HCI block (HCI_UTRL_NEXUS_TYPE etc.),
+    # reg[4]/reg[5] = the UFS protector (UFSPRSECURITY, DESCTYPE).
     root.children.append(mkadt.node('exynos990-ufs', [
         ('compatible', mkadt.cstr('samsung,exynos-ufs')),
         ('reg', mkadt.u64(UFS_HCI_BASE, UFS_HCI_SIZE,
-                          UFS_VS_BASE, UFS_VS_SIZE)),
+                          UFS_VS_BASE, UFS_VS_SIZE,
+                          UFS_PROT_BASE, UFS_PROT_SIZE)),
     ]))
     # TODO(Exynos 990): add the framebuffer console node once the DECON
     # handoff exists.  pe_serial.c looks the console up by name
