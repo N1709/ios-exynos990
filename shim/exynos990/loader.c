@@ -187,7 +187,7 @@ static void hw_facts(void)
 uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 {
 	con_init();
-	out("\nEXYNOS990 LOADER BEGIN (ios-galaxy-s8 exynos990 port)\n");
+	out("\nEXYNOS990 LOADER BEGIN (ios-exynos990 exynos990 port)\n");
 	kv("EL", el);
 	kv("SCTLR", sctlr);
 	kv("DTB", dtb);

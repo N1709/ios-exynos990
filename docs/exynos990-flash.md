@@ -68,7 +68,7 @@ picocom -b 115200 /dev/ttyUSB0
 The loader prints, in this order:
 
 ```
-EXYNOS990 LOADER BEGIN (ios-galaxy-s8 exynos990 port)
+EXYNOS990 LOADER BEGIN (ios-exynos990 exynos990 port)
 EL=1 SCTLR=... DTB=0
 MIDR=... MPIDR=...
 CNTFRQ=... GICD_TYPER=... irq lines=...

@@ -4,7 +4,7 @@ Branch `exynos990` ports the A5XELTE/S8 work (iOS 16.7 on Samsung hardware:
 Samsung boot chain, Exynos UFS, DECON display handoff, HSI2C touch, GPT
 root) from the Galaxy S8 (Exynos 8895) to the **Exynos 990** family.
 
-The port is built *in this repo* from the `ios-galaxy-s8` base; no code is
+The port is built *in this repo* from the `ios-exynos990` base; no code is
 taken from other projects. Hardware facts come from the Samsung Android
 kernel tree `android_kernel_samsung_exynos990` (DTS/DTSI + drivers), each
 fact cited in `docs/exynos990-hardware.md`.
