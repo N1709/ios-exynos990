@@ -6,6 +6,30 @@ This project ports Apple's open-source XNU kernel (xnu-8796, the iOS 16 generati
 
 > ⚠️ Experimental bring-up, not a usable phone OS. It is very slow and much is missing (see [Known bugs](#known-bugs)). Installing it **erases the USERDATA partition** (all Android data). Exynos **SM-G950F** only.
 
+## Galaxy S20 family (Exynos 990) — port in progress
+
+This branch (`main`) ports the same work to the **Exynos 990** (universal9830)
+family: Galaxy S20/S20 5G (`x1s`), S20+ (`y2s`), S20 Ultra (`z3s`), S20 FE
+(`r8s`), Note 20 (`c1s`), Note 20 Ultra (`c2s`), S10 5G (`win2`).
+
+The boot chain differs from the S8: the phone boots from the `boot`
+partition with an Android boot image v2, not from the Samsung BOOT
+partition, so the port has its own loader in `shim/exynos990/`.
+
+| Path | What it is |
+| --- | --- |
+| `shim/exynos990/` | Loader for the Exynos 990: `loader.c`, `console.c` (USI debug UART), `board.h` (every board constant with its source) |
+| `shim/exynos990/make-boot.sh` | Kernel Mach-O → boot image v2 for the `boot` partition |
+| `tools/mkboot_exynos990.py` | Boot image v2 packer (AOSP `ANDROID!` header) |
+| `tools/mkadt_exynos990.py` | Apple Device Tree for the Exynos 990 (per model) |
+| `docs/exynos990-hardware.md` | Hardware facts with the Android kernel source of every value |
+| `EXYNOS990_PROGRESS.md` | Port log: milestones, device evidence, open questions |
+
+Hardware facts come from the Samsung Android kernel tree
+`android_kernel_samsung_exynos990`, not from guesswork. **Nothing has been
+flashed to a phone yet** — the loader is built and packaged locally, the
+device round-trip is the next step.
+
 ## What works
 
 | Area | State |
