@@ -117,7 +117,7 @@ def build(canvas=(FB_W, FB_H)):
     root.children = [n for n in root.children if n.prop('name') not in
                      (mkadt.cstr('sweet-fbcon'), mkadt.cstr('sweet-ufs'))]
     # pe_serial.c looks the console up by this name on the A5XELTE config.
-    root.children.append(mkadt.node('a5xelte-fbcon', [
+    root.children.append(mkadt.node('samsung-fbcon', [
         ('reg', mkadt.u64(FB_PHYS, FB_W * FB_H * 4)),
         ('width', mkadt.u32(FB_W)),
         ('height', mkadt.u32(FB_H)),

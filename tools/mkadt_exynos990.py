@@ -287,8 +287,9 @@ def build(model=DEFAULT_MODEL, canvas=None, dram_base=DRAM_BASE,
     ]))
     arm_io.children.append(mkadt.node('disp0', [
         ('device_type', mkadt.cstr('display-subsystem')),
-        # AppleCLCD (SweetFramebuffer.cpp) matches 'samsung,a5xelte-display';
-        # without it no main display exists and SpringBoard aborts.
+        # AppleCLCD (SweetFramebuffer.cpp) matches 'samsung,exynos990-display'
+        # (or the donor strings); without it no main display exists and
+        # SpringBoard aborts.
         ('compatible', mkadt.cstr('samsung,exynos990-display') +
          mkadt.cstr('samsung,a5xelte-display')),
         # The native portrait resolution of the panel of this board.
@@ -316,7 +317,7 @@ def build(model=DEFAULT_MODEL, canvas=None, dram_base=DRAM_BASE,
     # with reg[1] bytes; the physical address of the DECON window is not
     # known yet, so a guessed address is not published here.
     #
-    # root.children.append(mkadt.node('exynos990-fbcon', [
+    # root.children.append(mkadt.node('samsung-fbcon', [
     #     ('reg', mkadt.u64(FB_PHYS, FB_W * FB_H * 4)),
     #     ('width', mkadt.u32(FB_W)),
     #     ('height', mkadt.u32(FB_H)),
