@@ -1,0 +1,355 @@
+/* SPDX-License-Identifier: GPL-2.0-only
+ * Galaxy S20 family (Samsung Exynos 990, universal9830) XNU loader.
+ *
+ * sboot loads the boot image v2 we build with tools/mkboot_exynos990.py:
+ *   - "kernel"  = this loader Image, at 0x10008000
+ *   - "ramdisk" = the XNU payload container (tools/mkpayload.py, "SWEETXNU"
+ *     v1: Mach-O segments, ADT and boot-args), at 0x11000000
+ *
+ * The loader finds that container, copies the kernel segments into the
+ * kernel-managed RAM window the payload names (the high DRAM bank at
+ * 0x880000000, free of firmware carve-outs), places the ADT and the
+ * boot_args behind the kernel and jumps to XNU's physical entry with the
+ * MMU and the caches off - the same hand-off shim/a5xelte/xnu_boot.c and
+ * shim/dreamlte/loader.c use.
+ *
+ * Log: the USI debug UART (uart@10540000, USI_PERIC0_UART_DBG).  A USB-TTL adapter
+ * on the phone's debug UART pins shows it.  There is no screen console yet:
+ * sboot leaves no framebuffer behind, and the DECON handoff for Exynos
+ * 9830 is not written (see EXYNOS990_PROGRESS.md).
+ */
+#include <stdint.h>
+#include "../fdt.h"
+#include "board.h"
+#include "console.h"
+#include "ufs_probe.h"
+
+/* ---- payload container (tools/mkpayload.py, "SWEETXNU" v1) ---- */
+struct payload_seg {
+	uint64_t vmaddr, vmsize, file_off, file_size;
+};
+struct payload {
+	char magic[8];
+	uint32_t version, nsegs;
+	uint64_t virt_base, entry_va, adt_off, adt_size, kernel_end;
+	uint64_t phys_base, mem_size;
+	char cmdline[BOOT_LINE_LENGTH];
+	struct payload_seg segs[];
+};
+struct boot_video {
+	uint64_t v_baseAddr, v_display, v_rowBytes, v_width, v_height, v_depth;
+};
+struct boot_args {
+	uint16_t Revision, Version;
+	uint64_t virtBase, physBase, memSize, topOfKernelData;
+	struct boot_video Video;
+	uint32_t machineType;
+	uint64_t deviceTreeP;
+	uint32_t deviceTreeLength;
+	char CommandLine[BOOT_LINE_LENGTH];
+	uint64_t bootFlags, memSizeActual;
+};
+_Static_assert(__builtin_offsetof(struct payload, segs) == 0x2a8, "payload layout");
+_Static_assert(__builtin_offsetof(struct boot_args, CommandLine) == 108, "boot_args layout");
+_Static_assert(sizeof(struct boot_args) == 736, "boot_args size");
+
+uint64_t ex_boot_args;		/* boot_args PA, read by start.S */
+
+/* ---- tiny console helpers ---- */
+static void out(const char *s)
+{
+	con_puts(s);
+}
+
+static void hex(uint64_t v)
+{
+	static const char digits[] = "0123456789abcdef";
+	char b[19] = "0x";
+	int n = 2, started = 0;
+
+	for (int i = 60; i >= 0; i -= 4) {
+		int d = (v >> i) & 0xf;
+		if (d || started || i == 0) {
+			b[n++] = digits[d];
+			started = 1;
+		}
+	}
+	b[n] = 0;
+	out(b);
+}
+
+static void kv(const char *k, uint64_t v)
+{
+	out(k);
+	out("=");
+	hex(v);
+	out(" ");
+}
+
+/* ---- memory helpers (MMU off: everything is Device memory) ---- */
+static void copy(uintptr_t dst, uintptr_t src, uint64_t n)
+{
+	if (!((dst | src) & 7)) {
+		for (; n >= 8; n -= 8, dst += 8, src += 8)
+			*(volatile uint64_t *)dst = *(volatile uint64_t *)src;
+	}
+	for (; n; n--, dst++, src++)
+		*(volatile uint8_t *)dst = *(volatile uint8_t *)src;
+}
+
+static void zero(uintptr_t dst, uint64_t n)
+{
+	for (; n && (dst & 7); n--, dst++)
+		*(volatile uint8_t *)dst = 0;
+	for (; n >= 8; n -= 8, dst += 8)
+		*(volatile uint64_t *)dst = 0;
+	for (; n; n--, dst++)
+		*(volatile uint8_t *)dst = 0;
+}
+
+static void clean(uintptr_t start, uintptr_t end)
+{
+	uint64_t ctr;
+	__asm__ volatile("mrs %0, ctr_el0" : "=r"(ctr));
+	uintptr_t line = 4UL << ((ctr >> 16) & 0xf);
+
+	for (uintptr_t p = start & ~(line - 1); p < end; p += line)
+		__asm__ volatile("dc civac, %0" : : "r"(p) : "memory");
+	__asm__ volatile("dsb sy" ::: "memory");
+}
+
+static int magic_ok(const volatile char *m)
+{
+	const char *want = "SWEETXNU";
+
+	for (int i = 0; i < 8; i++)
+		if (m[i] != want[i])
+			return 0;
+	return 1;
+}
+
+static uint64_t fail(const char *why)
+{
+	out("FAIL: ");
+	out(why);
+	out("\n");
+	return 0;
+}
+
+/* ---- payload lookup ----
+ * The ramdisk sits at the address the boot image header asks for, but a
+ * bootloader is free to relocate it, so the whole boot region is scanned
+ * for the container magic as a fallback. */
+static uintptr_t find_payload(void)
+{
+	uintptr_t p = (uintptr_t)RAMDISK_LOAD_ADDR;
+
+	if (magic_ok((const volatile char *)p))
+		return p;
+	for (p = (uintptr_t)BOOT_SCAN_START; p < (uintptr_t)BOOT_SCAN_END; p += 16)
+		if (magic_ok((const volatile char *)p))
+			return p;
+	return 0;
+}
+
+/* A DTB handed over in x0 would let us read /chosen/linux,initrd-start;
+ * sboot on Exynos does not pass one, but the loader checks anyway. */
+static int fdt_ok(uintptr_t dtb)
+{
+	if (dtb < LOW_RAM_BASE || dtb >= LOW_RAM_END)
+		return 0;
+	return *(volatile uint32_t *)dtb == 0xd00dfeedU;
+}
+
+/* ---- what the firmware left us ----
+ * The boot core's MPIDR decides which ADT cpu node must be "running", and
+ * the GIC type says which interrupt layout the kernel expects.  Both are
+ * facts we cannot read out of the device tree, so the loader prints them. */
+static void hw_facts(void)
+{
+	uint64_t midr, mpidr, ctrfrq, typer = 0;
+
+	__asm__ volatile("mrs %0, midr_el1" : "=r"(midr));
+	__asm__ volatile("mrs %0, mpidr_el1" : "=r"(mpidr));
+	__asm__ volatile("mrs %0, cntfrq_el0" : "=r"(ctrfrq));
+	typer = *(volatile uint32_t *)(GICD_BASE + GICD_TYPER);
+	kv("MIDR", midr);
+	kv("MPIDR", mpidr);
+	out("\n");
+	kv("CNTFRQ", ctrfrq);
+	kv("GICD_TYPER", typer);
+	out("\n");
+	/* GICD_TYPER[4:0] + 1 = implemented interrupt lines. */
+	kv("irq lines", (uint64_t)((typer & 0x1f) + 1));
+	out("\n");
+}
+
+uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
+{
+	con_init();
+	out("\nEXYNOS990 LOADER BEGIN (ios-galaxy-s8 exynos990 port)\n");
+	kv("EL", el);
+	kv("SCTLR", sctlr);
+	kv("DTB", dtb);
+	out("\n");
+	if (el != 1)
+		return fail("not entered at EL1");
+	hw_facts();
+
+	if (fdt_ok(dtb)) {
+		uint64_t rd_start = 0, rd_end = 0;
+		if (fdt_chosen_u64(dtb, "linux,initrd-start", &rd_start) &&
+		    fdt_chosen_u64(dtb, "linux,initrd-end", &rd_end))
+			kv("dt initrd", rd_start);
+		kv("dt end", rd_end);
+		out("\n");
+	} else {
+		out("no DTB in x0 (expected on Exynos)\n");
+	}
+
+	uintptr_t rd_start = find_payload();
+	if (!rd_start)
+		return fail("no SWEETXNU payload in the ramdisk");
+	kv("payload", rd_start);
+	out("\n");
+
+	const volatile struct payload *p = (const volatile struct payload *)rd_start;
+	uint64_t nsegs = p->nsegs;
+	kv("segs", nsegs);
+	kv("virt", p->virt_base);
+	kv("entry", p->entry_va);
+	out("\n");
+	kv("phys", p->phys_base);
+	kv("mem", p->mem_size);
+	kv("adt", p->adt_size);
+	out("\n");
+	if (p->version != 1)
+		return fail("payload is not version 1");
+	if (!nsegs || nsegs > 32)
+		return fail("bad payload segment count");
+	if (p->phys_base < XNU_RAM_BASE || p->phys_base >= XNU_RAM_END || !p->mem_size ||
+	    p->mem_size > XNU_RAM_END - p->phys_base)
+		return fail("payload RAM outside the high bank");
+	if (p->entry_va < p->virt_base || p->kernel_end < p->virt_base)
+		return fail("bad payload VA layout");
+
+	/* The container size is unknown (no length field in v1), so the
+	 * segment table bounds are checked against the ramdisk window. */
+	uint64_t rd_end = rd_start + 0x4000000UL;	/* 64 MiB */
+	if (rd_end > (uintptr_t)BOOT_SCAN_END)
+		rd_end = (uintptr_t)BOOT_SCAN_END;
+	uint64_t length = rd_end - rd_start;
+	if (__builtin_offsetof(struct payload, segs) + nsegs * sizeof(struct payload_seg) > length ||
+	    p->adt_off > length || p->adt_size > length - p->adt_off)
+		return fail("bad payload header");
+
+	uintptr_t mem_end = p->phys_base + p->mem_size;
+	uintptr_t kernel_end = p->phys_base + (p->kernel_end - p->virt_base);
+	if (kernel_end >= mem_end)
+		return fail("kernel larger than the RAM window");
+
+	/* Read-only UFS probe before the RAM window is wiped: it reports the
+	 * host state sboot left, reads the GPT and prints the USERDATA, BOOT
+	 * and SYSTEM extents.  The scratch area is inside the XNU window, so
+	 * it is zeroed right afterwards. */
+	ufs_probe(kv, out, UFS_DMA_BASE);
+
+	/* sboot leaves the previous OS's data in RAM (Android, or a previous
+	 * loader run); iBoot hands XNU zeroed memory, so zero it here. */
+	out("zeroing XNU RAM...\n");
+	zero(p->phys_base, p->mem_size);
+	out("zeroed\n");
+
+	for (uint64_t i = 0; i < nsegs; i++) {
+		const volatile struct payload_seg *s = &p->segs[i];
+		if (s->vmaddr < p->virt_base || s->file_size > s->vmsize ||
+		    s->file_off > length || s->file_size > length - s->file_off ||
+		    s->vmsize > p->mem_size || s->vmaddr - p->virt_base > p->mem_size - s->vmsize)
+			return fail("bad segment");
+		uintptr_t dst = p->phys_base + (s->vmaddr - p->virt_base);
+		copy(dst, rd_start + s->file_off, s->file_size);
+		zero(dst + s->file_size, s->vmsize - s->file_size);
+		clean(dst, dst + s->vmsize);
+		out("seg ");
+		hex(i);
+		out(" -> ");
+		hex(dst);
+		out(" ");
+		hex(s->vmsize);
+		out("\n");
+	}
+
+	uintptr_t adt_pa = kernel_end;
+	uintptr_t ba_pa = (adt_pa + p->adt_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+	if (ba_pa + PAGE_SIZE > mem_end)
+		return fail("no room for ADT/boot_args");
+	copy(adt_pa, rd_start + p->adt_off, p->adt_size);
+	zero(ba_pa, PAGE_SIZE);
+
+	volatile struct boot_args *ba = (volatile struct boot_args *)ba_pa;
+	ba->Revision = 2;
+	ba->Version = 2;
+	ba->virtBase = p->virt_base;
+	ba->physBase = p->phys_base;
+	ba->memSize = p->mem_size;
+	ba->topOfKernelData = ba_pa + PAGE_SIZE;
+	ba->deviceTreeP = p->virt_base + (adt_pa - p->phys_base);
+	ba->deviceTreeLength = (uint32_t)p->adt_size;
+	for (int i = 0; i < BOOT_LINE_LENGTH; i++)
+		ba->CommandLine[i] = p->cmdline[i];
+	ba->memSizeActual = p->mem_size;
+	clean(adt_pa, ba_pa + PAGE_SIZE);
+
+	uintptr_t entry_pa = p->phys_base + (p->entry_va - p->virt_base);
+	if (entry_pa >= kernel_end)
+		return fail("entry outside the kernel");
+	ex_boot_args = ba_pa;
+	kv("adt_pa", adt_pa);
+	kv("boot_args", ba_pa);
+	out("\n");
+	kv("entry_pa", entry_pa);
+	out("\ncmdline: ");
+	for (int i = 0; i < BOOT_LINE_LENGTH && p->cmdline[i]; i++) {
+		char c[2] = { p->cmdline[i], 0 };
+		out(c);
+	}
+	out("\n\nJUMP TO XNU\n");
+	clean(p->phys_base, mem_end);
+	return entry_pa;
+}
+
+void ex_exception(uint64_t slot)
+{
+	uint64_t esr, elr, far;
+	__asm__ volatile("mrs %0, esr_el1" : "=r"(esr));
+	__asm__ volatile("mrs %0, elr_el1" : "=r"(elr));
+	__asm__ volatile("mrs %0, far_el1" : "=r"(far));
+	out("\nLOADER EXCEPTION ");
+	kv("slot", slot);
+	kv("ESR", esr);
+	kv("ELR", elr);
+	kv("FAR", far);
+	out("\n");
+	for (;;)
+		__asm__ volatile("wfe");
+}
+
+/* gcc may emit calls for struct copies; keep the image self-contained. */
+void *memset(void *d, int c, unsigned long n)
+{
+	unsigned char *q = d;
+
+	while (n--)
+		*q++ = (unsigned char)c;
+	return d;
+}
+
+void *memcpy(void *d, const void *s, unsigned long n)
+{
+	unsigned char *q = d;
+	const unsigned char *r = s;
+
+	while (n--)
+		*q++ = *r++;
+	return d;
+}
