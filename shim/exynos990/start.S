@@ -43,7 +43,25 @@ _start:
 	b.hs	2f
 	str	xzr, [x1], #8
 	b	1b
-2:	mov	x0, x19
+2:	/* Durable proof of execution.  Every log sink has lost the race
+	 * with whatever runs next, but the ramoops dump zone at 0xeb308000
+	 * is only read (never rewritten) by the next kernel: TWRP's
+	 * dmesg-ramoops-0 still held a 2026-10-19 panic, so a record put
+	 * here survives the reset and is visible as
+	 * /sys/fs/pstore/dmesg-ramoops-0 on the next boot.  It is written
+	 * before the first C instruction, so its absence means S-Boot never
+	 * jumped to this image. */
+	movz	x2, #0xeb30, lsl #16
+	movk	x2, #0x8000
+	adr	x1, alive_blob
+	mov	x3, #(alive_blob_end - alive_blob)
+6:	ldrb	w4, [x1], #1
+	strb	w4, [x2], #1
+	subs	x3, x3, #1
+	b.ne	6b
+	dsb	sy
+
+	mov	x0, x19
 	mov	x1, x20
 	mov	x2, x21
 	bl	ex_main			/* returns XNU entry PA, or 0 */
@@ -96,3 +114,17 @@ exc_common:
 	bl	ex_exception		/* never returns */
 5:	wfe
 	b	5b
+
+	/* persistent_ram record: {sig, start, size} then pstore text.  The
+	 * dump zone's data area is 16384-12 bytes and TWRP's kernel parses
+	 * it with the "====<sec>.<usec>-D\n" header the ramoops driver
+	 * expects (fs/pstore/ram.c:157-175). */
+	.section .rodata
+	.balign	8
+alive_blob:
+	.long	0x43474244			/* "DBGC" */
+	.long	0				/* start */
+	.long	alive_blob_end - alive_blob - 12	/* size */
+	.ascii	"====0.0-D\n"
+	.ascii	"EXYNOS990 ALIVE: S-Boot jumped to the loader\n"
+alive_blob_end:
