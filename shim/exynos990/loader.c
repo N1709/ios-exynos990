@@ -386,6 +386,36 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 	klog_init();
 	mark('2');
 	out("\nEXYNOS990 LOADER BEGIN (ios-exynos990 exynos990 port)\n");
+
+	/* The mark page lives inside __BOOTDATA, which the segment copy below
+	 * overwrites, so it has to be read before the copy. */
+	/* TEMPORARY: print the previous kernel's marks, then clear the page. */
+	{
+		volatile char *m = (volatile char *)(uintptr_t)XMARK_PHYS;
+		char line[80];
+		int n = 0;
+
+		if (m[0] != '\0') {
+			out("kernel marks:\n");
+			for (int i = 0; i < 4095 && m[i]; i++) {
+				line[n++] = m[i];
+				if (n == (int)sizeof(line) - 1 || m[i] == '\n') {
+					line[n] = 0;
+					out(line);
+					n = 0;
+				}
+			}
+			if (n) {
+				line[n] = 0;
+				out(line);
+				out("\n");
+			}
+		} else {
+			out("kernel marks: none (kernel did not reach arm_init)\n");
+		}
+		fill((uintptr_t)XMARK_PHYS, 0x1000, 0);
+	}
+
 	mark('3');
 	kv("EL", el);
 	kv("SCTLR", sctlr);
@@ -549,33 +579,6 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 	}
 
 	mark('A');
-
-	/* TEMPORARY: print the previous kernel's marks, then clear the page. */
-	{
-		volatile char *m = (volatile char *)(uintptr_t)XMARK_PHYS;
-		char line[80];
-		int n = 0;
-
-		if (m[0] != '\0') {
-			out("kernel marks:\n");
-			for (int i = 0; i < 4095 && m[i]; i++) {
-				line[n++] = m[i];
-				if (n == (int)sizeof(line) - 1 || m[i] == '\n') {
-					line[n] = 0;
-					out(line);
-					n = 0;
-				}
-			}
-			if (n) {
-				line[n] = 0;
-				out(line);
-				out("\n");
-			}
-		} else {
-			out("kernel marks: none (kernel did not reach arm_init)\n");
-		}
-		fill((uintptr_t)XMARK_PHYS, 0x1000, 0);
-	}
 
 	uintptr_t adt_pa = kernel_end;
 	uintptr_t ba_pa = (adt_pa + p->adt_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
