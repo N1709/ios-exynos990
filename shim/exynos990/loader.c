@@ -278,8 +278,13 @@ static void zero(uintptr_t dst, uint64_t n)
  * L1+L2 pair for the kernel virtual map (TTBR1).  They stay in DRAM after
  * XNU dies and the segment copy below has not touched them yet, so walking
  * them says whether the address the kernel returns to was actually mapped
- * when the MMU came on.  Remove with the rest of the early diagnostics. */
-#define PT_PHYS		0x891004000ull	/* _bootstrap_pagetables, KVA 0xfffffe0007004000 */
+ * when the MMU came on.
+ *
+ * The address is the symbol's KVA plus the runtime slide, not the start of
+ * __TEXT: reading 0x891004000 only showed the Mach-O header and __TEXT
+ * code (every page then looks like a table with random descriptors).
+ * Remove with the rest of the early diagnostics. */
+#define PT_KVA_OFF	0x172000ull	/* _bootstrap_pagetables - __TEXT start */
 #define PT_PAGES	4
 
 static uint64_t pte(uint64_t pa)
@@ -288,19 +293,19 @@ static uint64_t pte(uint64_t pa)
 }
 
 /* 4 KiB granule walk: L1 index bits [38:30], L2 index bits [29:21]. */
-static uint64_t pt_walk(uint64_t va)
+static uint64_t pt_walk(uint64_t pt_pa, uint64_t va)
 {
 	uint64_t i1 = (va >> 30) & 0x1ff, i2 = (va >> 21) & 0x1ff;
 
 	for (int t = 0; t < PT_PAGES; t++) {
-		uint64_t base = PT_PHYS + (uint64_t)t * 0x1000;
+		uint64_t base = pt_pa + (uint64_t)t * 0x1000;
 		uint64_t d = pte(base + i1 * 8);
 		uint64_t l2;
 
 		if ((d & 3) != 3)	/* not a table descriptor */
 			continue;
 		l2 = d & 0x0000fffffffff000ull;
-		if (l2 < PT_PHYS || l2 >= PT_PHYS + PT_PAGES * 0x1000)
+		if (l2 < pt_pa || l2 >= pt_pa + PT_PAGES * 0x1000)
 			continue;
 		d = pte(l2 + i2 * 8);
 		if (d & 1)		/* block or page descriptor */
@@ -309,10 +314,12 @@ static uint64_t pt_walk(uint64_t va)
 	return 0;
 }
 
-static void pt_report(uint64_t entry_va, uint64_t entry_pa)
+static void pt_report(uint64_t pt_pa, uint64_t entry_va, uint64_t entry_pa)
 {
+	kv("ptpa", pt_pa);
+	out("\n");
 	for (int t = 0; t < PT_PAGES; t++) {
-		uint64_t base = PT_PHYS + (uint64_t)t * 0x1000;
+		uint64_t base = pt_pa + (uint64_t)t * 0x1000;
 		uint64_t blk = 0, tbl = 0, first = 0, last = 0;
 		int have = 0;
 
@@ -340,7 +347,7 @@ static void pt_report(uint64_t entry_va, uint64_t entry_pa)
 	}
 
 	{
-		uint64_t d = pt_walk(entry_va);
+		uint64_t d = pt_walk(pt_pa, entry_va);
 
 		kv("ptkva", d);
 		kv("->pa", d & 0x0000ffffffe00000ull);
@@ -348,7 +355,7 @@ static void pt_report(uint64_t entry_va, uint64_t entry_pa)
 		out("\n");
 	}
 	{
-		uint64_t d = pt_walk(entry_pa);
+		uint64_t d = pt_walk(pt_pa, entry_pa);
 
 		kv("ptid", d);
 		kv("->pa", d & 0x0000ffffffe00000ull);
@@ -652,7 +659,8 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 
 	/* TEMPORARY: XNU wrote these pages before it turned the MMU on; the
 	 * copy below replaces them, so read them now. */
-	pt_report(p->entry_va, p->phys_base + (p->entry_va - p->virt_base));
+	pt_report(kpa0 + PT_KVA_OFF, p->entry_va,
+		  p->phys_base + (p->entry_va - p->virt_base));
 
 	for (uint64_t i = 0; i < nsegs; i++) {
 		const volatile struct payload_seg *s = &p->segs[i];
