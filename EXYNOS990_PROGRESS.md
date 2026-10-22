@@ -358,3 +358,46 @@ that carveout before jumping.  The window now starts at `0x890000000`
 This is a static finding, not a proven boot fix: the phone still has to be
 booted once with the new image, and the pstore log read back, before the
 JUMP TO XNU / panic point is known.
+
+## Boot attempt 2: the image that can be read back
+
+CI run `39789011238` (run #21, commit `cb698cb`, `macos-15-intel`, 16 min)
+builds the kernel with both fixes:
+
+- `0136` now feeds the RAM ring from `uart_putc_options_()`, the single path
+  every `kprintf` (and every panic) takes.  Before, `klog_putc()` was only
+  called from `fbcon_transmit_data()`, so with no framebuffer detected the
+  ring stayed empty.
+- `klog_init()` moved ahead of the `soc_base` lookup, so the sink is live
+  even if the UART/framebuffer probes fail.
+
+The loader also reads both Samsung watchdog controllers
+(`WTCON/WTDAT/WTCNT`), logs them, and turns an armed timer off, because
+`exynos9830.dts:1990-2012` gives `timeout-sec = <30>` and nothing in the
+port pets it - a watchdog reset and a crash look identical from outside.
+
+Boot image built from that kernel:
+
+```
+sha256 4b151a8310f091ba534abe0ba54e67669c3480fc1e0ea231a36f2518ccc1b152
+kernel c6484373c0333b1ef97ee933b1818b0f08f136e545f073059a737335c761ef15
+payload phys_base 0x890000000, mem_size 0x20000000, entry 0xfffffe0007430488
+loader 49920 bytes, strings: "watchdog disabled: ", "wtcon_cl0"
+```
+
+Expected log after one failed boot (TWRP, `pmsg-ramoops-0`):
+
+```
+EXYNOS990 LOADER BEGIN ...
+wtcon_cl0=0x... ...          <- was the watchdog armed?
+watchdog disabled: wtcon_cl0 <- if WTCON bit 5 was set
+...
+JUMP TO XNU
+--- XNU console ---          <- first XNU kprintf, if it ever runs
+```
+
+The shape of the failure tells which of the three suspects it is: a log
+that stops at `JUMP TO XNU` is a PE/pmap failure before `serial_init`; a
+`--- XNU console ---` line means XNU started and the following text is the
+real panic; no `EXYNOS990` at all means the reset happens before the loader
+runs (S-Boot) and only a UART will help.
