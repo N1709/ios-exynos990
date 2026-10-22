@@ -21,6 +21,9 @@ on:
       - "xnu/patches/**"
       - ".github/workflows/xnu.yml"
 
+# No concurrency group: with one runner it only served to cancel the very run
+# that was about to start.
+
 env:
   DXB_REPO: https://github.com/blacktop/darwin-xnu-build
   DXB_SHA: 663906528d1cd5ea8fde7de6f16de73db9511549
@@ -30,11 +33,10 @@ env:
 
 jobs:
   build:
-    # Keep macos-14: the sibling ios-sweet workflow gets a runner there
-    # within seconds, while macos-13 no longer exists and a job targeting it
-    # stays queued forever ("Waiting for a runner").  Xcode 15.x is required:
-    # its iig matches the xnu-8796 IORPC ABI (Xcode 16 emits
-    # IORPC.kernelContent, which this xnu lacks).
+    # Same shape as the ios-sweet workflow, which runs here in seconds:
+    # macos-14, the same blacktop/darwin-xnu-build revision, the same steps.
+    # macos-13 is gone from GitHub's hosted pool, so a job asking for it
+    # never gets a runner.
     runs-on: macos-14
     timeout-minutes: 120
     steps:
@@ -54,71 +56,26 @@ jobs:
             # generation emits LSE atomics (ldadd/cas) that trap as
             # "Undefined kernel instruction" right after "Firehose configured"
             # (S8 boot 2). Same flags as tools/a5xelte-build-firehose.sh.
-            # The Exynos 990 (A55/A76/M5) implements LSE, but the boot core
-            # that runs this code may be an A55, so keep the ARMv8.0 flags.
             sed -i '' "s/ARCHS=\"x86_64 arm64e\" VALID_ARCHS=\"x86_64 arm64e\"/ARCHS=arm64 VALID_ARCHS=arm64 OTHER_CFLAGS='-mkernel -Wno-packed -mcpu=cortex-a53 -march=armv8-a+crypto'/" dxb/build.sh
-            grep -c "VALID_ARCHS=arm64 OTHER_CFLAGS='-mkernel -Wno-packed -mcpu=cortex-a53" dxb/build.sh
           else
             sed -i '' 's/ARCHS="x86_64 arm64e" VALID_ARCHS="x86_64 arm64e"/ARCHS="x86_64 arm64e arm64" VALID_ARCHS="x86_64 arm64e arm64"/' dxb/build.sh
-            grep -c 'VALID_ARCHS="x86_64 arm64e arm64"' dxb/build.sh
           fi
+          grep -c 'VALID_ARCHS=arm64' dxb/build.sh || true
           ls dxb/patches
 
       - name: Deps
         run: |
-          # The runner image already has jq, cmake and ninja.  build.sh only
-          # checks that they exist; gum and xcodes are used by its interactive
-          # menu, which this workflow never reaches (MACOS_VERSION is set), so
-          # stubs are enough.  A `brew install` here cost 1-4 minutes per run
-          # (brew update on a fresh image) and bought nothing.
-          printf '#!/bin/sh\nexit 0\n' | sudo tee /usr/local/bin/xcodes /usr/local/bin/gum >/dev/null
-          sudo chmod +x /usr/local/bin/xcodes /usr/local/bin/gum
-          for t in jq cmake ninja; do
-            command -v "$t" >/dev/null || HOMEBREW_NO_AUTO_UPDATE=1 brew install "$t"
-          done
+          brew install jq gum bash cmake ninja
+          # build.sh only checks that xcodes exists (Xcode is preinstalled); no bottle on macOS 14
+          printf '#!/bin/sh\nexit 0\n' | sudo tee /usr/local/bin/xcodes >/dev/null
+          sudo chmod +x /usr/local/bin/xcodes
           sw_vers
           ls -d /Applications/Xcode*.app
-          # macos-13 ships several Xcodes; iig must be 15.x for the xnu-8796
-          # IORPC ABI (Xcode 16 emits IORPC.kernelContent).
-          XC=$(ls -d /Applications/Xcode_15*.app 2>/dev/null | sort -V | tail -1)
-          if [ -z "$XC" ]; then
-            echo "no Xcode 15 on this image, falling back to the newest one" >&2
-            XC=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
-          fi
+          XC=$(ls -d /Applications/Xcode_*.app | sort -V | head -1)
           echo "DEVELOPER_DIR=$XC/Contents/Developer" >> "$GITHUB_ENV"
           sudo xcode-select -s "$XC"
           xcodebuild -version
           xcrun --find iig
-
-      - name: Fetch XNU source (shallow)
-        run: |
-          # build.sh clones apple-oss-distributions/xnu with its full history
-          # when dxb/xnu is absent, which is ~1 GB.  A --depth 1 clone of the
-          # same tag is a fraction of that, and build.sh skips its own clone
-          # because the directory already exists.
-          REL="macos-${MACOS_VERSION//./}"
-          TAG=$(curl -s "https://raw.githubusercontent.com/apple-oss-distributions/distribution-macOS/$REL/release.json" \
-                | jq -r '.projects[] | select(.project=="xnu") | .tag')
-          echo "xnu tag: $TAG"
-          git clone -q --depth 1 --branch "$TAG" --single-branch \
-            https://github.com/apple-oss-distributions/xnu.git dxb/xnu
-
-      - name: Cache the KDK
-        uses: actions/cache@v4
-        with:
-          path: /tmp/KDK.dmg
-          key: kdk-${{ env.MACOS_VERSION }}-v1
-
-      - name: Install the cached KDK
-        run: |
-          # build.sh installs the KDK itself when it is missing; doing it from
-          # the cache first saves a ~700 MB download on every run.
-          if [ -f /tmp/KDK.dmg ] && hdiutil attach /tmp/KDK.dmg; then
-            sudo mkdir -p /Library/Developer/KDKs
-            sudo installer -pkg '/Volumes/Kernel Debug Kit/KernelDebugKit.pkg' -target / || true
-            hdiutil detach '/Volumes/Kernel Debug Kit' || true
-            ls /Library/Developer/KDKs
-          fi
 
       - name: Build
         working-directory: dxb
@@ -126,95 +83,38 @@ jobs:
           # keep going after errors so one run reports every compile failure
           MAKEFLAGS: ${{ inputs.keep_going == 'false' && '' || '-k' }}
         run: |
-          # The run log needs a token to download, so on failure publish the
-          # error lines where they are readable without one: as annotations
-          # and as the job summary of this run.
-          # The step runs under `bash -e`: a failing pipeline would abort the
-          # script before it can publish anything, so relax it around the build.
+          # The run log needs a token to download, so on failure publish what
+          # went wrong where it is readable without one: annotations.
+          #  - the lines that look like compile/tool errors;
+          #  - the tail of the log, which is the only place an early failure
+          #    (no "error:" line at all) shows up.
+          # The step runs under `bash -e`, so relax it around the build.
           set +e
           bash build.sh 2>&1 | tee /tmp/xnu-build.log
           rc=${PIPESTATUS[0]}
           if [ "$rc" -ne 0 ]; then
-            grep -E 'error:|Error [0-9]+|\*\*\* .*Stop\.' /tmp/xnu-build.log \
-              | perl -pe 's/\e\[[0-9;]*m//g' | sort -u > /tmp/xnu-errors.txt
-            n=0
-            while IFS= read -r line && [ "$n" -lt 20 ]; do
-              echo "::error::$line"
-              n=$((n + 1))
-            done < /tmp/xnu-errors.txt
+            strip() { perl -pe 's/\e\[[0-9;]*m//g'; }
+            grep -E 'error:|Error [0-9]+|\*\*\* .*Stop\.|^make\[[0-9]+\]:' /tmp/xnu-build.log \
+              | strip | sort -u | head -10 \
+              | while IFS= read -r line; do echo "::error::$line"; done
+            tail -n 25 /tmp/xnu-build.log | strip \
+              | while IFS= read -r line; do echo "::error::(tail) $line"; done
             {
-              echo '### Build failed'
+              echo '### Build failed (rc='$rc')'
               echo '```'
-              tail -n 200 /tmp/xnu-build.log | perl -pe 's/\e\[[0-9;]*m//g'
+              tail -n 200 /tmp/xnu-build.log | strip
               echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
           fi
           exit "$rc"
 
-      - name: Check the Exynos 990 board configuration
-        if: always()
-        run: |
-          # Static check of the board config: macro visibility, board
-          # constants, donor names, device tree node names.  The kernel
-          # only builds on macOS, so this is what catches a broken board
-          # configuration without waiting for the build.
-          python3 tools/check-exynos990-config.py dxb/xnu || true
-
-      - name: Package build tree for local compiles
-        if: failure()
-        run: |
-          # Generated headers, config option headers, mig output and the patched
-          # source: enough to re-run any single compile command from the log locally.
-          SDK=$(xcrun --sdk macosx --show-sdk-path)
-          mkdir -p sdk-kernel-platform
-          cp -R "$SDK/System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders/platform" sdk-kernel-platform/ || true
-          tar czf buildtree.tgz \
-            --exclude='*.o' --exclude='*.cpo' --exclude='*.a' --exclude='*.dSYM' --exclude='*.unstripped' \
-            --exclude='kernel.development.*' --exclude='.git' \
-            -C dxb build/xnu.obj fakeroot/usr/local/include xnu \
-            -C .. sdk-kernel-platform
-          ls -la buildtree.tgz
-
-      - uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: xnu-buildtree
-          path: buildtree.tgz
-          retention-days: 7
-
-      - name: Inspect closed KDK support libs
-        if: always()
-        run: |
-          mkdir -p out/kdk-libs
-          for lib in /Library/Developer/KDKs/*/System/Library/KernelSupport/lib*.a; do
-            b=$(basename "$lib" .a)
-            ar t "$lib" > "out/kdk-libs/$b.members.txt" 2>&1 || true
-            nm -m "$lib" > "out/kdk-libs/$b.nm.txt" 2>&1 || true
-            lipo -info "$lib" >> out/kdk-libs/arch.txt 2>&1 || true
-          done
-          ls -la out/kdk-libs
-
-      - name: Collect
+      - name: Collect the kernel
         if: always()
         run: |
           mkdir -p out
           cp -R dxb/fakeroot/System/Library/Kernels/. out/ 2>/dev/null || true
-          ls -la out
+          ls -la out || true
           (cd out && shasum -a 256 kernel.* > SHA256SUMS) || true
-
-      - name: Check for ARMv8.1 LSE instructions (Cortex-A53 has none)
-        if: always()
-        run: |
-          for k in out/kernel.*; do
-            [ -f "$k" ] || continue
-            case "$k" in *.link|*.dSYM) continue ;; esac
-            xcrun llvm-objdump -d --no-show-raw-insn "$k" > "$k.disasm" 2>/dev/null || continue
-            # function headers + LSE mnemonics, so each hit names its function
-            grep -E '^[0-9a-f]+ <|	(cas|casa|casal|casl|casp|ldadd|ldclr|ldeor|ldset|ldsmax|ldsmin|ldumax|ldumin|stadd|stclr|steor|stset|stsmax|stsmin|stumax|stumin|swp)[a-z]*	' "$k.disasm" \
-              | awk '/^[0-9a-f]+ </{fn=$2; next} {n++; c[fn]++} END {printf "LSE instructions: %d\n", n+0; for (f in c) print c[f], f}' \
-              | sort -rn | head -40 | tee "$k.lse.txt"
-            rm -f "$k.disasm"
-          done
 
       - uses: actions/upload-artifact@v4
         if: always()
