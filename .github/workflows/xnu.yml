@@ -33,6 +33,8 @@ env:
 
 jobs:
   build:
+    permissions:
+      contents: write
     # macos-14 is the only image left that ships Xcode 15, whose iig matches
     # xnu-8796 (macos-13 was retired in Dec 2025; macos-15 and 15-intel ship
     # Xcode 16+, whose iig emits IORPC.kernelContent).  That pins this job to
@@ -112,6 +114,20 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
           exit "$rc"
+
+      - name: Publish the build log
+        if: failure()
+        run: |
+          # Run logs need a login, so on failure the log is committed to a
+          # branch: that branch can be fetched with git, which is what the
+          # agent that fixes the build has access to.
+          git config user.name 'github-actions'
+          git config user.email 'github-actions@github.com'
+          tail -n 1000 /tmp/xnu-build.log | perl -pe 's/\e\[[0-9;]*m//g' > ci-log.txt
+          git checkout -q -B ci-logs
+          git add -f ci-log.txt
+          git commit -q -m "build log for ${GITHUB_SHA}" || true
+          git push -q -f origin ci-logs
 
       - name: Collect the kernel
         if: always()
