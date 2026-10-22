@@ -1,0 +1,32 @@
+name: runner-probe
+
+# One-off: which macOS image gets a runner right now, and which Xcode does it
+# ship?  A label that no longer exists never starts (it sits queued), so the
+# start times answer both questions.  Delete this workflow once a label is
+# chosen.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/runner-probe.yml"
+
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, macos-15, macos-26, macos-15-intel, macos-26-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - name: Which runner and which Xcode
+        run: |
+          echo "label: ${{ matrix.os }}"
+          sw_vers
+          uname -m
+          sysctl -n hw.ncpu
+          ls -d /Applications/Xcode*.app
+          xcode-select -p
+          xcrun --find iig || true
+          xcodebuild -version
