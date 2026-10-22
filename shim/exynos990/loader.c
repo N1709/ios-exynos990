@@ -56,42 +56,30 @@ _Static_assert(sizeof(struct boot_args) == 736, "boot_args size");
 
 uint64_t ex_boot_args;		/* boot_args PA, read by start.S */
 
-/* ---- RAM log sink -------------------------------------------------------
- * Every line the loader prints also goes to TWRP's ramoops pmsg zone
- * (board.h), in persistent_ram format, so the log survives the reset a
- * failed boot causes.  XNU appends to the same ring (pe_serial.c), which
- * makes /sys/fs/pstore/pmsg-ramoops-0 show loader + kernel text.. */
-#define KLOG_CAP	(KLOG_SIZE - 12)
+/* ---- RAM log buffer -----------------------------------------------------
+ * The log lives in the loader's own BSS, not in TWRP's ramoops pmsg zone.
+ * An earlier version kept a ring in the pmsg zone (0xeb30c000) and
+ * continued it across runs whenever its persistent_ram header looked sane.
+ * TWRP writes its userspace log into that same zone with the same "DBGC"
+ * magic, so the loader appended after TWRP's records: the durable record
+ * began with 12 KB of adbd/SELinux text and our own lines only started at
+ * offset 12588 of a 13942-byte record (observed 2026-10-23).  Starting from
+ * zero on every run also keeps the record small enough to fit comfortably
+ * in one 16 KiB dump zone. */
+#define KLOG_CAP	8192
 
-static volatile uint32_t *const klog_hdr = (volatile uint32_t *)KLOG_PHYS;
-static volatile uint8_t *const klog_data = (volatile uint8_t *)(KLOG_PHYS + 12);
-static uint32_t klog_off, klog_len;
+static uint8_t klog_buf[KLOG_CAP];
+static uint32_t klog_len;
 
 static void klog_init(void)
 {
-	/* Continue a ring left by an earlier run only when its header is
-	 * consistent (start == size, both inside the data area). */
-	uint32_t start = klog_hdr[1], size = klog_hdr[2];
-
-	if (klog_hdr[0] == 0x43474244u /* "DBGC" */ && start < KLOG_CAP &&
-	    size < KLOG_CAP && start == size) {
-		klog_off = klog_len = size;
-		return;
-	}
-	klog_hdr[0] = 0x43474244u;
-	klog_off = klog_len = 0;
-	klog_hdr[1] = 0;
-	klog_hdr[2] = 0;
+	klog_len = 0;
 }
 
 static void klog_putc(char c)
 {
-	klog_data[klog_off] = (uint8_t)c;
-	klog_off = (klog_off + 1) % KLOG_CAP;
 	if (klog_len < KLOG_CAP)
-		klog_len++;
-	klog_hdr[1] = klog_off;
-	klog_hdr[2] = klog_len;
+		klog_buf[klog_len++] = (uint8_t)c;
 }
 
 /* ---- visible marker ----
@@ -160,9 +148,9 @@ static void klog_dump(void)
 	for (const char *s = rec; *s; s++)
 		d[n++] = (uint8_t)*s;
 
-	uint32_t start = (klog_len == KLOG_CAP) ? klog_off : 0;
+	uint32_t start = 0;	/* the record always begins at data[0] */
 	for (uint32_t i = 0; i < klog_len && n + 2 < DUMP_CAP; i++)
-		d[n++] = klog_data[(start + i) % KLOG_CAP];
+		d[n++] = klog_buf[(start + i) % KLOG_CAP];
 
 	d[n++] = '\n';
 	h[0] = 0x43474244u;	/* "DBGC" */
@@ -395,6 +383,23 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 		char line[80];
 		int n = 0;
 
+		/* Always show the first 32 bytes, whatever they are: a zero
+		 * page means the kernel never wrote, our "XMARK" text means
+		 * it did, anything else means either a stale page or the
+		 * wrong physical address. */
+		{
+			static const char hd[] = "0123456789abcdef";
+			char hx[3];
+
+			out("mkhex=");
+			for (int i = 0; i < 32; i++) {
+				hx[0] = hd[((uint8_t)m[i]) >> 4];
+				hx[1] = hd[((uint8_t)m[i]) & 15];
+				hx[2] = 0;
+				out(hx);
+			}
+			out("\n");
+		}
 		if (m[0] != '\0') {
 			out("kernel marks:\n");
 			for (int i = 0; i < 4095 && m[i]; i++) {

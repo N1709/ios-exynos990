@@ -442,3 +442,41 @@ libfdt, "fdt_dtb is not set yet"), so a v2 image needs a real dtb blob.
 dtb table (340,940 bytes) taken from the boot image of the working
 ArtisanROM build for the same phone.  The new header is field-for-field
 identical to that working image apart from the kernel and ramdisk sizes.
+
+## The loader log ring was sharing TWRP's pmsg zone (2026-10-23)
+
+Read of `/sys/fs/pstore/dmesg-ramoops-0` after the first boot of image
+`8a9dd69e` returned a 13942-byte record whose first 12588 bytes were TWRP's
+*userspace pmsg* log (binary `pmsg` record headers, then `SELinux`,
+`avc: denied`, `adbd`, `Boot command: boot-recovery`); the loader's own
+banner only started at offset 12588.
+
+Cause: `klog_init()` kept the loader's ring in the ramoops **pmsg** zone
+(`KLOG_PHYS 0xeb30c000`, `board.h:77`) and continued a ring left by an
+earlier run when its `persistent_ram` header looked sane (`sig == "DBGC"`,
+`start == size`, both inside the data area).  TWRP's pmsg zone uses the
+same `"DBGC"` signature and its header also has `start == size`, so the
+check accepted TWRP's ring and the loader appended its text after TWRP's
+records.  Nothing about XNU was involved; this is a loader bug.
+
+Fixed in `shim/exynos990/loader.c`:
+
+- the log lives in the loader's own BSS (`klog_buf`, 8 KiB) instead of the
+  pmsg zone, so TWRP can never inject into it and the loader stops writing
+  TWRP's log at all (verified: the built `Image` no longer references
+  `0xeb30c000`);
+- `klog_init()` always starts at zero, so the durable record contains one
+  loader run only, `start = 0`, `size = n` (roughly 1.5 KiB instead of
+  13.9 KiB);
+- the mark-page reader now always prints `mkhex=<first 32 bytes>` before the
+  text, which separates "kernel wrote nothing" (all zero), "our text"
+  (`XMARK`), and "wrong page / stale data" (anything else).
+
+Separately, the same dump showed single-character damage in *both* our text
+and TWRP's text (`UsbFfsConnection being destroyed` -> `UsbFfsCon.ection
+bEing destrohed`, `EXYNOS990` -> `EXIN\x0fS9<0`, `SCTLR` -> `CCT\x0cR`) at
+identical offsets and lengths.  That is not text mixing: individual bytes
+differ while the numeric values (`0xc5183a`, `0x8a080000`) are intact.  The
+next boot's `mkhex` line will show whether the mark page (a different
+physical page) shows the same damage, which decides between a zone-level
+problem and something that touches the dump page after it is written.
