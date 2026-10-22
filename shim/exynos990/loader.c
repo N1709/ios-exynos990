@@ -338,7 +338,7 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 		ba->Video.v_rowBytes = fb.stride;
 		ba->Video.v_width = fb.width;
 		ba->Video.v_height = fb.height;
-		ba->Video.v_depth = 32 | (1 << 16);    /* depth 32, scale 1x */
+		ba->Video.v_depth = 32;               /* depth 32, rotate 0, scale 1x */
 		kv("fb", fb.phys);
 		kv("fb_width", fb.width);
 		kv("fb_height", fb.height);

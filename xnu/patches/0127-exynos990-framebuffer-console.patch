@@ -1,0 +1,121 @@
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index 164e083..532fde8 100644
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -166,7 +166,24 @@ AppleCLCD::start(IOService *provider)
+ 		return false;
+ 	}
+ 	PE_current_console(&video);
+-#if (defined(ARM64_BOARD_CONFIG_A5XELTE) || defined(ARM64_BOARD_CONFIG_EXYNOS990))
++#if defined(ARM64_BOARD_CONFIG_EXYNOS990)
++	/* The Exynos 990 loader probes the display the Samsung bootloader left
++	 * running ("LCD_ON_UBOOT") and hands the scanout buffer to XNU in
++	 * boot_args.Video, so PE_current_console has the real console
++	 * information.  The board constants are only a fallback for a loader
++	 * that found no display. */
++	if (video.v_baseAddr && video.v_width && video.v_height && video.v_rowBytes) {
++		fPhys = video.v_baseAddr;
++		fWidth = (uint32_t)video.v_width;
++		fHeight = (uint32_t)video.v_height;
++		fRowBytes = (uint32_t)video.v_rowBytes;
++	} else {
++		fPhys = SWEET_FB_PHYS;
++		fWidth = SWEET_FB_WIDTH;
++		fHeight = SWEET_FB_HEIGHT;
++		fRowBytes = SWEET_FB_STRIDE;
++	}
++#elif defined(ARM64_BOARD_CONFIG_A5XELTE)
+ 	/* The loader's DECON handoff scans out this physical XRGB8888 buffer.
+ 	 * It does not fill boot_args.Video, so PE_current_console is empty.
+ 	 * Keep the physical address out of the donor path. */
+diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
+index 84bc9ee..d9c4715 100644
+--- a/osfmk/arm64/sweet_early.c
++++ b/osfmk/arm64/sweet_early.c
+@@ -7,7 +7,40 @@
+  */
+ #include <arm64/sweet_early.h>
+ 
+-#if defined(SWEET) && (defined(ARM64_BOARD_CONFIG_A5XELTE) || defined(ARM64_BOARD_CONFIG_EXYNOS990))
++#if defined(SWEET) && defined(ARM64_BOARD_CONFIG_EXYNOS990)
++/*
++ * The Exynos 990 has no bootstrap framebuffer: the scanout buffer address is
++ * only known after the loader's DECON probe, and the bootstrap TTBR0 does not
++ * map it.  The early output goes to the UART and to the loader log; the
++ * framebuffer console starts with the boot_args.Video buffer that pe_serial
++ * maps.  Keep the entry points so panic() and arm_vm_init link unchanged.
++ */
++#include <stdint.h>
++#include <kern/misc_protos.h>
++
++void
++sweet_early_putc(char c)
++{
++	(void)c;
++}
++
++void
++sweet_early_mark(unsigned int stage, const char *label)
++{
++	(void)stage;
++	(void)label;
++}
++
++void
++sweet_early_panic(const char *fmt, va_list *args)
++{
++	(void)fmt;
++	(void)args;
++}
++
++void sweet_early_relocate(uint64_t base) { (void)base; }
++void sweet_early_disable(void) {}
++#elif defined(SWEET) && (defined(ARM64_BOARD_CONFIG_A5XELTE) || defined(ARM64_BOARD_CONFIG_EXYNOS990))
+ #include <stdint.h>
+ #include <kern/misc_protos.h>
+ 
+diff --git a/pexpert/arm/pe_serial.c b/pexpert/arm/pe_serial.c
+index 9f7863b..bd6e654 100644
+--- a/pexpert/arm/pe_serial.c
++++ b/pexpert/arm/pe_serial.c
+@@ -28,6 +28,7 @@
+ #include <arm64/proc_reg.h>
+ #include <arm64/sweet_early.h>
+ #include <pexpert/arm/protos.h>
++#include <pexpert/arm64/boot.h>
+ #include <kern/sched_prim.h>
+ #if HIBERNATION
+ #include <machine/pal_hibernate.h>
+@@ -881,6 +882,32 @@ fbcon_probe(void)
+ 	uint32_t const *val;
+ 	unsigned int size;
+ 
++#if defined(EXYNOS990)
++	/*
++	 * The Exynos 990 has no build-time framebuffer address.  The Samsung
++	 * bootloader leaves the display running ("LCD_ON_UBOOT") and the
++	 * loader probes the DECON registers and hands the scanout buffer over
++	 * in boot_args.Video, so the console uses that buffer.  Only if the
++	 * loader found no display does the ADT node apply.
++	 */
++	if (PE_state.bootArgs != NULL) {
++		Boot_Video *video = &((boot_args *)PE_state.bootArgs)->Video;
++
++		if (video->v_baseAddr && video->v_width && video->v_height &&
++		    video->v_rowBytes) {
++			fbcon_width = (uint32_t)video->v_width;
++			fbcon_height = (uint32_t)video->v_height;
++			fbcon_stride = (uint32_t)video->v_rowBytes;
++			fbcon_base = (volatile uint32_t *)ml_io_map_wcomb(
++			    (vm_offset_t)video->v_baseAddr,
++			    (vm_size_t)fbcon_stride * fbcon_height);
++			if (fbcon_base != NULL) {
++				register_serial_functions(&sweet_fbcon_serial_functions);
++				return;
++			}
++		}
++	}
++#endif
+ 	#if (defined(A5XELTE) || defined(EXYNOS990))
+ 	if (SecureDTFindEntry("name", "samsung-fbcon", &entry) != kSuccess ||
+ #else
