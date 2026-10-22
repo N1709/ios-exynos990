@@ -221,3 +221,27 @@ bsd/vm/vm_unix.c:1774:20: error: incomplete definition of type 'struct pid_hiber
 
 The config checker now also verifies the three stage scripts and that
 `pid_hibernate` survives the preprocessor for this board.
+
+## Third CI build (run 39758989801, 2026-10-22)
+
+First run that reached the `bsd` compiles with the include paths fixed (and
+the first on `macos-15-intel`; the job started in 3 seconds, while
+`macos-14` had been queueing for minutes).  `make -k` hid the error in
+thousands of warning lines, so the whole log is now published to the
+`ci-logs` branch.  The actual failure:
+
+```
+make[7]: *** No rule to make target `.../xnu/bsd/dev/a5xelte_emmc.c', needed by `a5xelte_emmc.o'.
+make[7]: *** No rule to make target `.../xnu/bsd/dev/a5xelte_keys.c', needed by `a5xelte_keys.o'.
+make[7]: *** No rule to make target `.../xnu/bsd/dev/a5xelte_touch.c', needed by `a5xelte_touch.o'.
+```
+
+Patch `0125` renames those three sources to `samsung_emmc.c`,
+`samsung_keys.c` and `samsung_touch.c` (the 990 has its own board files),
+but it did not update `bsd/conf/files`, which still listed the old names.
+Patch `0133` renames the three lines.
+
+`tools/check-exynos990-config.py` now also compares `bsd/conf/files` with
+the rename table, so the check fails offline when a source is renamed
+without its build-list line — verified on the applied tree with and without
+`0133`.

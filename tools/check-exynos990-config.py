@@ -170,6 +170,15 @@ def main():
     for old, new in RENAMED:
         check(not os.path.exists(os.path.join(tree, old)) and os.path.exists(os.path.join(tree, new)),
               f'{old} -> {new}')
+    # Renaming a source without renaming its line in bsd/conf/files makes make
+    # ask for the old file:  "No rule to make target .../bsd/dev/a5xelte_emmc.c,
+    # needed by a5xelte_emmc.o" -- which is what CI run 39758989801 hit.
+    listed = {line.split()[0] for line in
+              read(os.path.join(tree, 'bsd', 'conf', 'files')).splitlines()
+              if line.strip() and not line.lstrip().startswith('#')}
+    for old, new in RENAMED:
+        check(new in listed and old not in listed,
+              f'bsd/conf/files lists {new}, not {old}')
 
     print('5. device tree node names')
     serial = read(os.path.join(tree, 'pexpert', 'arm', 'pe_serial.c'))
