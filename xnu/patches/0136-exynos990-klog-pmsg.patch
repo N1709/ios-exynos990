@@ -96,7 +96,7 @@ index ddb9f02..10147bd 100644
 + *
 + * So the ring lives at 0xeb308000 + 0x4000, 16 KiB, persistent_ram format
 + * (sig "DBGC", start, size, data) - the same layout the loader writes. */
-+#define SWEET_KLOG_PHYS               0xeb30c000u
++#define SWEET_KLOG_PHYS               0xeb308000u
 +#define SWEET_KLOG_SIZE               0x4000
  #define SWEET_USE_PHYS_TIMER          1
  /* Physical timer: PPI 14 = INTID 30 (see the comment above). */
