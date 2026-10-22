@@ -88,6 +88,12 @@ def main():
     check(os.path.exists(hdr), 'pexpert/pexpert/arm64/EXYNOS990.h exists')
     mkmake = read(os.path.join(tree, 'pexpert', 'pexpert', 'arm64', 'Makefile'))
     check('EXYNOS990.h' in mkmake, 'the arm64 Makefile installs EXYNOS990.h')
+    # doconf picks config/MASTER.arm64.<soc>; without it the build silently
+    # falls back to the generic arm64 master, which does not set nos_arm_asm,
+    # and the kernel then fails at link with undefined CleanPoC_Dcache,
+    # Idle_context, _bcopyin, ... (CI run 39761003089).
+    check(os.path.exists(os.path.join(tree, 'config', 'MASTER.arm64.exynos990')),
+          'config/MASTER.arm64.exynos990 exists, so doconf picks it')
 
     # The dxb build copies xnu/patches/*.sh next to the patches and runs them
     # from the XNU root before applying the patches.  They stage sources that
