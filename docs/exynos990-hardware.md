@@ -1177,3 +1177,77 @@ the next milestone.
 | `samsung,boot` / DTBH | not present in the tree | absence (whole-tree search) |
 | Panel `s6e3hab` | 1440×3200, DSI 1157 MHz, 4 lanes, DSC 2×(720×40) | `arch/arm64/boot/dts/exynos/exynos9830-display-lcd.dtsi:277-308` |
 | Native display mode | 1440×3200 @ 60 | `arch/arm64/boot/dts/samsung/exynos990-hubble_panel_display_modes.dtsi:20,37-56` |
+
+## Display (DECON / DSIM / DPHY)
+
+The 9830 DPU is the "dpu30" generation: DECON is the display controller, the
+six DPP/IDMA units are the layer readers, DQE is the quality block and DSIM
+the MIPI DSI host.  Sources: `arch/arm64/boot/dts/exynos/exynos9830-dpu.dtsi`
+(device tree) and `drivers/video/fbdev/exynos/dpu30/cal_9830/regs-{decon,dpp,dsim}.h`
+(register map of the 9830, the file the Android driver itself uses).
+
+### Bases
+
+| Block | Address | Size | Source |
+|---|---|---|---|
+| DECON_F | `0x19050000` | 0x10000 | `exynos9830-dpu.dtsi:306-309` |
+| DECON_S | `0x19060000` | 0x10000 | `exynos9830-dpu.dtsi:360-363` |
+| DECON_T | `0x19070000` | 0x10000 | `exynos9830-dpu.dtsi:399-402` |
+| DSIM | `0x190C0000` | 0x300 | `exynos9830-dpu.dtsi:269-272` |
+| DPHY (DSIM) | `0x190E0000` 0x100 + `0x190E0100` 0x700 | | `exynos9830-dpu.dtsi:261-272` |
+| DPP n (n = 0..5) | `0x19091000 + n*0x1000` | 0x1000 | `exynos9830-dpu.dtsi:48-96` |
+| IDMA n | `0x19041000 + n*0x1000` | 0x1000 | `exynos9830-dpu.dtsi:52,98` |
+| disp_ss | `0x19021000` | 0x10 | `exynos9830-dpu.dtsi:256-258` |
+
+### Registers used by the port
+
+| Register | Offset | Bits | Source |
+|---|---|---|---|
+| `GLOBAL_CONTROL` | `0x0000` | `RUN_STATUS` bit 4, `OPERATION_MODE` bit 8 (1 = command), `DECON_EN` bit 0 | `regs-decon.h:92,99-105` |
+| `DATA_PATH_CONTROL_0` | `0x0214` | window `w` enabled = bit `4w`; its channel = bits `4w+0..2` | `regs-decon.h:335-341` |
+| `WIN_CONTROL_0(w)` | `0x1000 + 0x30w` | window control | `regs-decon.h:407` |
+| `WIN_START_POSITION(w)` | `0x1008 + 0x30w` | x = bits 15:0, y = bits 31:16 | `regs-decon.h:430-432` |
+| `WIN_END_POSITION(w)` | `0x100C + 0x30w` | x = bits 15:0, y = bits 31:16 | `regs-decon.h:434-436` |
+| `SHADOW_REG_UPDATE_REQ` | `0x0060` | global / per-window / DQE shadow update | `regs-decon.h:154` |
+| `IDMA_IN_CON` | `0x0008` | image format bits 13:8 | `regs-dpp.h:115,120` |
+| `IDMA_IMG_SIZE` | `0x0018` | width bits 13:0, height bits 29:16 | `regs-dpp.h:184-188` |
+| `IDMA_IN_BASE_ADDR_Y8` | `0x0040` | luma / single plane base | `regs-dpp.h:202` |
+| `IDMA_IN_BASE_ADDR_C8` | `0x0044` | chroma base | `regs-dpp.h:203` |
+| `IDMA_SRC_STRIDE_0` | `0x0050` | chroma stride bits 15:0 | `regs-dpp.h:207-216` |
+| `IDMA_SRC_STRIDE_1` | `0x0054` | plane 0 stride bits 15:0, plane 1 bits 31:16 | `regs-dpp.h:218-221` |
+| `DSIM_VERSION` / `LINK_STATUS0/1` / `LINK_STATUS3` | `0x0` / `0x8`,`0xc` / `0x14` | `LINK_STATUS3` bit 0 = PLL stable | `regs-dsim.h:18-40` |
+
+Image formats (`IDMA_IMG_FORMAT`): ARGB8888 = 0, XRGB8888 = 4, RGB565 = 8,
+YUV420 2-plane = 24 (`regs-dpp.h:122-144`).
+
+### The bootloader leaves the display running
+
+The Android driver does not initialize DECON unconditionally.  It first asks
+whether the block already runs and, if so, only re-programs the probe state:
+
+    if (decon_reg_get_run_status(id)) {
+            decon_info("decon_reg_init already called by BOOTLOADER\n");
+            decon_reg_init_probe(id, dsi_idx, p);
+            ...
+            return -EBUSY;
+    }
+
+(`drivers/video/fbdev/exynos/dpu30/cal_9830/decon_reg.c:1634-1651`; the
+comment above it says "DECON does not need to start, if DECON is already
+running (enabled in LCD_ON_UBOOT)".)
+
+So on a phone the DECON registers already describe the panel being scanned
+out, and the layer base address registers hold the buffer the bootloader
+draws its logo into.  There is no `s3cfb.bootloaderfb`-style device tree
+property on the 9830 (`exynos9830-dpu.dtsi` has none; the 8895 S8 port relied
+on that property), but the same information is in the registers, which is what
+`shim/exynos990/decon_probe.c` reads.
+
+### Handoff to XNU
+
+`boot_args.Video` (`pexpert/pexpert/arm64/boot.h:32-41`, `struct Boot_Video`,
+six `unsigned long` fields) carries `v_baseAddr`, `v_display`, `v_rowBytes`,
+`v_width`, `v_height`, `v_depth`.  `PE_init_platform` copies it into
+`PE_state.video` (`pexpert/arm/pe_init.c:406-413`) and `PE_current_console`
+returns that to IOKit.  The loader fills it from the DECON probe, so the
+kernel console and the framebuffer driver do not need a build-time address.

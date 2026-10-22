@@ -125,10 +125,21 @@ _(none yet — milestone E1 has not been flashed)_
 - **E3 — storage.** `bsd/dev/sweet_ufs.c` reads the UFS host from the ADT
   node; the Exynos 9830 vendor SFR block (`0x13101100`) may differ from
   the 8895's — the S8 port's `sweet_ufs.c` is the starting point.
-- **E4 — display.** DECON/DSIM for the 9830 is new code: the 8895 DECON
-  trigger register (`0x12860070`) does not exist on the 9830
-  (`0x19050000` block, `exynos9830-dpu.dtsi`). Until then there is no
-  screen console and no main display.
+- **E4 — display.** Done differently from the S8: the 9830 has no
+  `bootloaderfb` device tree property, but the Samsung bootloader **leaves
+  DECON running** (`LCD_ON_UBOOT`, see
+  `cal_9830/decon_reg.c:1634-1651`), so the panel is already scanned out at
+  hand-off.  The loader probes the DECON registers read-only
+  (`shim/exynos990/decon_probe.c`): window geometry, image size, stride,
+  format and the address of the bootloader's buffer.  That buffer goes to
+  XNU in `boot_args.Video`, so the console (`pe_serial.c`), the framebuffer
+  driver (`SweetFramebuffer.cpp`) and the early console (`sweet_early.c`,
+  no-op on the 990 because its bootstrap TTBR0 maps no framebuffer) use it.
+  The probe's output is the display evidence of the phone: run status,
+  video/command mode, window, layer, format, DSIM PLL.  Remaining: confirm
+  on the phone which format the bootloader used (the console needs a
+  32-bit format) and, if the display must be re-programmed, write the
+  window + IDMA configuration from `regs-decon.h`/`regs-dpp.h`.
 - **E5 — touch.** Per-model I2C controller + GPIO IRQ (x1s: `hsi2c_15`,
   address 0x48, IRQ `gpm21`).
 - **E6 — iOS root.** Flash the iPhone X root into USERDATA (like the S8
