@@ -1,0 +1,33 @@
+diff --git a/iokit/Kernel/arm/SweetBattery.cpp b/iokit/Kernel/arm/SweetBattery.cpp
+index 627977c..b3f6f70 100644
+--- a/iokit/Kernel/arm/SweetBattery.cpp
++++ b/iokit/Kernel/arm/SweetBattery.cpp
+@@ -12,13 +12,27 @@
+ #include <IOKit/pwr_mgt/IOPMPowerSource.h>
+ #include <libkern/c++/OSCollectionIterator.h>
+ #include <pexpert/pexpert.h>
+-#if (defined(ARM64_BOARD_CONFIG_A5XELTE) || defined(ARM64_BOARD_CONFIG_EXYNOS990))
++#if defined(ARM64_BOARD_CONFIG_A5XELTE)
+ /* Galaxy S8: MAX77865 fuel gauge (bsd/dev/samsung_touch.c). */
+ extern "C" int dreamlte_battery_read(unsigned *percent, unsigned *mv, int *ma,
+     int *external, int *charging, int *full);
+ static inline int sweet_spmi_init(void) { return -1; }
+ static inline int sweet_spmi_read(unsigned, unsigned, uint8_t *) { return -1; }
+ #define SWEET_BAT_MAH 3000u
++#elif defined(ARM64_BOARD_CONFIG_EXYNOS990)
++/*
++ * Exynos 990: no fuel gauge is wired yet.  The MAX77865 reader that
++ * SweetBattery::poll() calls lives in bsd/dev/samsung_touch.c behind
++ * #if defined(DREAMLTE), which is the Galaxy S8 build, so linking the 990
++ * kernel against it fails with "undefined symbol _dreamlte_battery_read".
++ * Reply "no sample" until an Exynos 990 gauge driver exists; poll() then
++ * publishes its documented 100% default instead of reading S8 registers.
++ */
++static inline int dreamlte_battery_read(unsigned *, unsigned *, int *, int *,
++    int *, int *) { return -1; }
++static inline int sweet_spmi_init(void) { return -1; }
++static inline int sweet_spmi_read(unsigned, unsigned, uint8_t *) { return -1; }
++#define SWEET_BAT_MAH 4000u
+ #else
+ /* bsd/dev/sweet_spmi.c */
+ extern "C" int sweet_spmi_init(void);

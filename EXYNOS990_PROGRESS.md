@@ -245,3 +245,34 @@ Patch `0133` renames the three lines.
 the rename table, so the check fails offline when a source is renamed
 without its build-list line — verified on the applied tree with and without
 `0133`.
+
+## Fourth and fifth CI builds (39761003089, 39765091076, 2026-10-22)
+
+Both reached the final link.  The fourth one failed with
+
+```
+Undefined symbols for architecture arm64:
+"_CleanPoC_Dcache", "_FlushPoC_Dcache", "_CleanPoU_Dcache", "_Idle_context",
+"_Shutdown_context", "_ResetHandlerData", "_bcopyin", "_bcopyout", ...
+```
+
+`osfmk/conf/files.arm64` lists those assembly sources as `optional
+nos_arm_asm`, and `doconf` selects `config/MASTER.arm64.<soc>`; there was no
+`MASTER.arm64.exynos990`, so it fell back to the generic arm64 master and the
+assembly never entered the build.  Patch `0134` adds the master config (copy
+of the A5XELTE one, which already carries nos_arm_asm/nos_arm_pmap).
+
+That fixed all of them.  The fifth build then failed with a single symbol:
+
+```
+"_dreamlte_battery_read", referenced from:
+    SweetBattery::poll() in SweetBattery.cpo
+```
+
+`SweetBattery.cpp` grouped EXYNOS990 with A5XELTE and called the Galaxy S8
+MAX77865 reader, but that code sits in `bsd/dev/samsung_touch.c` behind
+`#if defined(DREAMLTE)`.  Patch `0135` gives the 990 its own branch: no
+sample (returns -1), so `poll()` publishes its documented 100% default until
+an Exynos 990 fuel-gauge driver exists.
+
+The config checker now also requires `config/MASTER.arm64.exynos990`.
