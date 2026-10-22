@@ -276,3 +276,20 @@ sample (returns -1), so `poll()` publishes its documented 100% default until
 an Exynos 990 fuel-gauge driver exists.
 
 The config checker now also requires `config/MASTER.arm64.exynos990`.
+
+## First green build (run 39770435460, 2026-10-22)
+
+`eb55547`, `macos-15-intel`, job 11:25:16 -> 11:38:56 (13m40s):
+
+```
+Build                 success
+Collect the kernel    success
+upload-artifact       success   xnu-kernel  66,649,065 bytes
+```
+
+This is a build claim only.  The kernel has not been run: no boot image has
+been made from it yet, nothing has been flashed, and no UART or screen output
+has been observed.  Next step: take `out/kernel.development.exynos990` out of
+the `xnu-kernel` artifact, run
+`tools/exynos990-make-boot.sh <kernel> z3s`, flash the resulting
+`boot-z3s.img` to the boot partition and capture the UART log.
