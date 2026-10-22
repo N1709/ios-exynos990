@@ -32,7 +32,7 @@ diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
 index 84bc9ee..d9c4715 100644
 --- a/osfmk/arm64/sweet_early.c
 +++ b/osfmk/arm64/sweet_early.c
-@@ -7,7 +7,40 @@
+@@ -7,7 +7,95 @@
   */
  #include <arm64/sweet_early.h>
  
@@ -44,9 +44,50 @@ index 84bc9ee..d9c4715 100644
 + * map it.  The early output goes to the UART and to the loader log; the
 + * framebuffer console starts with the boot_args.Video buffer that pe_serial
 + * maps.  Keep the entry points so panic() and arm_vm_init link unchanged.
++ *
++ * BOOT DIAGNOSTICS (temporary): the loader proves that this kernel's start.s
++ * runs, but nothing after it is observable - no UART, no framebuffer, and the
++ * AP watchdog resets the hung kernel.  The loader re-runs this boot image
++ * after that reset with normal DRAM intact, so the marks below go into the
++ * low page of the interrupt stack by KVA: that VA is mapped from the first C
++ * instruction (unlike the identity map, whose top end is uncertain), it is
++ * not touched while interrupts are masked, and cleaning each line to the
++ * point of coherency forces the text out to DRAM before the reset.  The next
++ * loader run prints the page.  Remove once the kernel boots.
 + */
 +#include <stdint.h>
 +#include <kern/misc_protos.h>
++
++#define SWEET_MARK_BASE 0xfffffe00084ac000ull	/* _intstack, low page */
++#define SWEET_MARK_CAP  4096u
++
++static unsigned int sweet_mark_off;
++static int sweet_mark_on = 1;
++
++static void
++sweet_mark_puts(const char *s)
++{
++	volatile char *p = (volatile char *)(uintptr_t)SWEET_MARK_BASE;
++
++	while (*s != '\0' && sweet_mark_off < SWEET_MARK_CAP - 1)
++		p[sweet_mark_off++] = *s++;
++	p[sweet_mark_off] = '\0';
++}
++
++static void
++sweet_mark_hex(uint64_t v)
++{
++	static const char digits[] = "0123456789abcdef";
++	char b[19];
++	int i;
++
++	b[0] = '0';
++	b[1] = 'x';
++	for (i = 0; i < 16; i++)
++		b[2 + i] = digits[(v >> (60 - 4 * i)) & 0xf];
++	b[18] = '\0';
++	sweet_mark_puts(b);
++}
 +
 +void
 +sweet_early_putc(char c)
@@ -57,8 +98,22 @@ index 84bc9ee..d9c4715 100644
 +void
 +sweet_early_mark(unsigned int stage, const char *label)
 +{
-+	(void)stage;
-+	(void)label;
++	uintptr_t a, e;
++
++	if (!sweet_mark_on)
++		return;
++	if (sweet_mark_off == 0)
++		sweet_mark_puts("XMARK v1\n");
++	sweet_mark_puts("stage ");
++	sweet_mark_hex((uint64_t)stage);
++	sweet_mark_puts(": ");
++	sweet_mark_puts(label);
++	sweet_mark_puts("\n");
++	a = (uintptr_t)SWEET_MARK_BASE;
++	e = a + ((sweet_mark_off + 63u) & ~(uintptr_t)63);
++	for (; a < e; a += 64)
++		__asm__ volatile("dc civac, %0" :: "r"(a) : "memory");
++	__asm__ volatile("dsb sy" ::: "memory");
 +}
 +
 +void
@@ -69,7 +124,7 @@ index 84bc9ee..d9c4715 100644
 +}
 +
 +void sweet_early_relocate(uint64_t base) { (void)base; }
-+void sweet_early_disable(void) {}
++void sweet_early_disable(void) { sweet_mark_on = 0; }
 +#elif defined(SWEET) && (defined(ARM64_BOARD_CONFIG_A5XELTE) || defined(ARM64_BOARD_CONFIG_EXYNOS990))
  #include <stdint.h>
  #include <kern/misc_protos.h>

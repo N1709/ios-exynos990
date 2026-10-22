@@ -259,39 +259,19 @@ static void copy(uintptr_t dst, uintptr_t src, uint64_t n)
 		*(volatile uint8_t *)dst = *(volatile uint8_t *)src;
 }
 
-/* ---- TEMPORARY boot-execution probe ------------------------------------
- * XNU writes its four bootstrap page-table pages at _bootstrap_pagetables
- * (0xfffffe0007176000 -> PA 0x891176000 with this kernel) with the MMU
- * still off, i.e. as Device stores that reach DRAM before anything can
- * cache them.  Pre-filling those pages with 0xAA and looking at them on the
- * next boot therefore answers "did XNU's start.s run at all?" without a
- * console.  The stack page below _excepstack_top is the weaker second
- * signal (written after the MMU is on), and the control page must stay
- * untouched: if it changes too, TWRP rewrote the window and the test is
- * inconclusive.  Remove this once XNU prints. */
-#define PROBE_JRNL   0x8AFFF0000ull
-#define PROBE_CTRL   0x8AFFE0000ull
-#define PROBE_PT     0x891176000ull	/* _bootstrap_pagetables */
-#define PROBE_STK    0x8924B7000ull	/* page below _excepstack_top */
-#define PROBE_MAGIC  0x534a524e4c303031ull
-#define PROBE_SELF   0x0123456789abcdefull
-#define PROBE_PAT    0xAA
+/* ---- TEMPORARY kernel early-mark reader ---------------------------------
+ * The kernel's sweet_early_mark() writes "XMARK v1" plus one line per stage
+ * into the low page of the interrupt stack by KVA and cleans it to DRAM, so
+ * it survives the AP watchdog reset.  That page is _intstack at
+ * 0xfffffe00084ac000 -> PA 0x8924ac000 in this kernel.  Print it and clear
+ * it for the next kernel.  Remove with sweet_early_mark (patch 0127). */
+#define XMARK_PHYS 0x8924ac000ull
 
 static void fill(uintptr_t dst, uint64_t n, uint8_t v)
 {
 	volatile uint8_t *p = (volatile uint8_t *)dst;
 	while (n--)
 		*p++ = v;
-}
-
-static uint64_t changed(uintptr_t a, uint64_t n, uint8_t v)
-{
-	volatile uint8_t *p = (volatile uint8_t *)a;
-	uint64_t c = 0;
-	while (n--)
-		if (*p++ != v)
-			c++;
-	return c;
 }
 
 static void zero(uintptr_t dst, uint64_t n)
@@ -570,30 +550,31 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 
 	mark('A');
 
-	/* TEMPORARY: read the previous boot's probe, then arm this one. */
+	/* TEMPORARY: print the previous kernel's marks, then clear the page. */
 	{
-		volatile uint64_t *j = (volatile uint64_t *)(uintptr_t)PROBE_JRNL;
-		if (j[0] == PROBE_MAGIC && j[1] == PROBE_SELF) {
-			out("prev boot: journal intact\n");
-			kv("pt_changed", changed(PROBE_PT, 0x4000, PROBE_PAT));
-			kv("stk_changed", changed(PROBE_STK, 0x1000, PROBE_PAT));
-			kv("ctl_changed", changed(PROBE_CTRL, 0x1000, PROBE_PAT));
-			out("\n");
+		volatile char *m = (volatile char *)(uintptr_t)XMARK_PHYS;
+		char line[80];
+		int n = 0;
+
+		if (m[0] != '\0') {
+			out("kernel marks:\n");
+			for (int i = 0; i < 4095 && m[i]; i++) {
+				line[n++] = m[i];
+				if (n == (int)sizeof(line) - 1 || m[i] == '\n') {
+					line[n] = 0;
+					out(line);
+					n = 0;
+				}
+			}
+			if (n) {
+				line[n] = 0;
+				out(line);
+				out("\n");
+			}
 		} else {
-			out("prev boot: journal absent\n");
+			out("kernel marks: none (kernel did not reach arm_init)\n");
 		}
-		j[0] = 0;
-		j[1] = 0;
-		if (PROBE_PT >= XNU_RAM_BASE && PROBE_PT + 0x4000 <= XNU_RAM_END &&
-		    PROBE_STK >= XNU_RAM_BASE && PROBE_STK + 0x1000 <= XNU_RAM_END) {
-			fill(PROBE_PT, 0x4000, PROBE_PAT);
-			fill(PROBE_STK, 0x1000, PROBE_PAT);
-			fill(PROBE_CTRL, 0x1000, PROBE_PAT);
-			j[1] = PROBE_SELF;
-			j[0] = PROBE_MAGIC;
-		} else {
-			out("probe: addresses outside the window, skipped\n");
-		}
+		fill((uintptr_t)XMARK_PHYS, 0x1000, 0);
 	}
 
 	uintptr_t adt_pa = kernel_end;
