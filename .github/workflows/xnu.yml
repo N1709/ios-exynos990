@@ -122,9 +122,14 @@ jobs:
           # agent that fixes the build has access to.
           git config user.name 'github-actions'
           git config user.email 'github-actions@github.com'
-          tail -n 1000 /tmp/xnu-build.log | perl -pe 's/\e\[[0-9;]*m//g' > ci-log.txt
+          strip() { perl -pe 's/\e\[[0-9;]*m//g'; }
+          # The whole log, compressed: make -k produces thousands of warning
+          # lines, so the last 1000 lines can contain no error at all.
+          strip < /tmp/xnu-build.log | gzip -9 > ci-log.txt.gz
+          strip < /tmp/xnu-build.log | grep -nE 'error:|fatal error|Error [0-9]+|\*\*\* ' | head -300 > ci-errors.txt || true
+          tail -n 3000 /tmp/xnu-build.log | strip > ci-log-tail.txt
           git checkout -q -B ci-logs
-          git add -f ci-log.txt
+          git add -f ci-log.txt.gz ci-errors.txt ci-log-tail.txt
           git commit -q -m "build log for ${GITHUB_SHA}" || true
           git push -q -f origin ci-logs
 
