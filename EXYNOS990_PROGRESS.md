@@ -197,3 +197,27 @@ the next run tells whether the sources themselves build.
 
 `tools/check-exynos990-config.py` now checks both lists, and it fails on a
 tree without `0130` — this class of error is caught offline from now on.
+
+## Second CI build (run 39738921422, 2026-10-22)
+
+With `0130` in place the kernel build starts; it failed after ~7 minutes with
+ten errors in two groups:
+
+```
+libkern/crypto/sweet_aes.c:12:10: fatal error: 'sweet_bearssl/inc/bearssl_block.h' file not found
+bsd/pthread/sweet_pthread_synch.c:4:10: fatal error: 'sweet_libpthread/kern/kern_synch.c' file not found
+bsd/vm/vm_unix.c:1774:20: error: incomplete definition of type 'struct pid_hibernate_args'
+```
+
+1. The stage scripts (`0019-stage-libpthread.sh`, `0020-stage-bearssl.sh`,
+   `0026-stage-hfs.sh`) fetched their sources only for `SWEET` and `A5XELTE`
+   (`case "${MACHINE_CONFIG:-}" in SWEET|A5XELTE)`) and exited 0 for any
+   other name, so the 990 build had no BearSSL and no libpthread sources at
+   all.  They now accept `EXYNOS990`.
+2. `pid_hibernate` needs `struct pid_hibernate_args`, which the build
+   generates from `bsd/kern/syscalls.master` — and there the syscall was
+   still guarded by `CONFIG_EMBEDDED || SWEET || A5XELTE`, so the 990 got
+   `nosys` and no argument struct.  Patch `0131` adds `EXYNOS990`.
+
+The config checker now also verifies the three stage scripts and that
+`pid_hibernate` survives the preprocessor for this board.

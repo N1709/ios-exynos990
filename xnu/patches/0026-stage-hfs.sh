@@ -3,7 +3,7 @@
 # dxb runs patches/*.sh from the XNU source root before applying *.patch.
 set -euo pipefail
 
-case "${MACHINE_CONFIG:-}" in SWEET|A5XELTE) ;; *) exit 0 ;; esac
+case "${MACHINE_CONFIG:-}" in SWEET|A5XELTE|EXYNOS990) ;; *) exit 0 ;; esac
 [[ "${MACOS_VERSION:-}" == 13.5 ]] || {
     echo 'SWEET HFS integration requires xnu-8796.141.3 (macOS 13.5)' >&2
     exit 1

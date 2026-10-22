@@ -89,6 +89,28 @@ def main():
     mkmake = read(os.path.join(tree, 'pexpert', 'pexpert', 'arm64', 'Makefile'))
     check('EXYNOS990.h' in mkmake, 'the arm64 Makefile installs EXYNOS990.h')
 
+    # The dxb build copies xnu/patches/*.sh next to the patches and runs them
+    # from the XNU root before applying the patches.  They stage sources that
+    # are not in git (BearSSL, libpthread, HFS); a script that does not know
+    # the machine config exits 0 without staging anything, and the compile
+    # then fails on the missing files.
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for script in ('0019-stage-libpthread.sh', '0020-stage-bearssl.sh',
+                   '0026-stage-hfs.sh'):
+        path = os.path.join(repo, 'xnu', 'patches', script)
+        text = read(path)
+        case = re.search(r'case "\$\{MACHINE_CONFIG:-\}" in\s*([^\n]*)', text)
+        check(case is not None and 'EXYNOS990' in case.group(1),
+              f'{script} stages its sources for EXYNOS990')
+
+    # syscalls.master is preprocessed with the build defines; a syscall left
+    # out of it has no generated `struct <syscall>_args`, and the kernel file
+    # that defines the function then fails with an incomplete type.
+    master = read(os.path.join(tree, 'bsd', 'kern', 'syscalls.master'))
+    hib = re.search(r'^#if [^\n]*\n435\t[^\n]*pid_hibernate', master, re.M)
+    check(hib is not None and 'EXYNOS990' in hib.group(0),
+          'syscalls.master keeps pid_hibernate for EXYNOS990')
+
     print('2. macro visibility')
     missing = []
     for path in sources(tree):
