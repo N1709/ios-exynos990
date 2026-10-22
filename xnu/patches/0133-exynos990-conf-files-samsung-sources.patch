@@ -1,0 +1,17 @@
+diff --git a/bsd/conf/files b/bsd/conf/files
+index 851addd..7f91512 100644
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -105,9 +105,9 @@ bsd/dev/random/randomdev.c		standard
+ 
+ bsd/dev/memdev.c			standard
+ bsd/dev/sweet_ufs.c			standard
+-bsd/dev/a5xelte_emmc.c			standard
+-bsd/dev/a5xelte_keys.c			standard
+-bsd/dev/a5xelte_touch.c			standard
++bsd/dev/samsung_emmc.c			standard
++bsd/dev/samsung_keys.c			standard
++bsd/dev/samsung_touch.c			standard
+ bsd/dev/sweet_sample.c			standard
+ bsd/dev/sweet_keys.c			standard
+ bsd/dev/sweet_touch.c			standard
