@@ -88,9 +88,11 @@ jobs:
           # The run log needs a token to download, so on failure publish the
           # error lines where they are readable without one: as annotations
           # and as the job summary of this run.
-          set -o pipefail
+          # The step runs under `bash -e`: a failing pipeline would abort the
+          # script before it can publish anything, so relax it around the build.
+          set +e
           bash build.sh 2>&1 | tee /tmp/xnu-build.log
-          rc=$?
+          rc=${PIPESTATUS[0]}
           if [ "$rc" -ne 0 ]; then
             grep -E 'error:|Error [0-9]+|\*\*\* .*Stop\.' /tmp/xnu-build.log \
               | perl -pe 's/\e\[[0-9;]*m//g' | sort -u > /tmp/xnu-errors.txt
