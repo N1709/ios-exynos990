@@ -94,6 +94,39 @@ static void klog_putc(char c)
 	klog_hdr[2] = klog_len;
 }
 
+/* ---- visible marker ----
+ * Every log sink has lost the race so far, and reading one needs a cable,
+ * adb and luck.  The panel, on the other hand, is still scanning out the
+ * bootloader's framebuffer while the loader runs: painting a band across the
+ * top of it answers "did the loader execute?" by eye, with nothing attached.
+ *
+ *   green  = the loader ran and got as far as building boot_args
+ *   blue   = it got past the payload copy and is about to jump to XNU
+ *
+ * The write only happens when the probe found a buffer that looks sane (a
+ * 32-bit address inside the low 3 GiB of DRAM, smaller than 64 MiB), so a
+ * bogus DECON register cannot turn this into a data abort.
+ */
+static void paint_band(const struct decon_fb *fb, uint32_t argb)
+{
+	if (!fb->found || !fb->width || !fb->height || fb->stride < 64)
+		return;
+	if (fb->phys < 0x80000000u || fb->phys >= 0xc0000000u)
+		return;
+	if ((uint64_t)fb->stride * fb->height > 64u * 1024u * 1024u)
+		return;
+
+	uint32_t stride = fb->stride / 4;	/* pixels per line, 32 bpp */
+	uint32_t lines = fb->height < 160u ? fb->height : 160u;
+	volatile uint32_t *p = (volatile uint32_t *)fb->phys;
+
+	for (uint32_t y = 0; y < lines; y++)
+		for (uint32_t x = 0; x < stride; x++)
+			p[(uint64_t)y * stride + x] = argb;
+
+	__asm__ volatile("dsb sy" ::: "memory");
+}
+
 /* ---- durable sink ----
  * TWRP fills the 16 KiB pmsg ring within seconds of starting (the ring is
  * already full when adbd appears), so a failed boot's text cannot be read
@@ -468,6 +501,7 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 	} else {
 		out("no display buffer found: XNU boots without a framebuffer\n");
 	}
+	paint_band(&fb, 0xff00ff00u);	/* green: loader reached the handoff */
 	clean(adt_pa, ba_pa + PAGE_SIZE);
 
 	uintptr_t entry_pa = p->phys_base + (p->entry_va - p->virt_base);
@@ -485,6 +519,7 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 	}
 	out("\n\nJUMP TO XNU\n");
 	klog_dump();
+	paint_band(&fb, 0xff0000ffu);	/* blue: about to branch into XNU */
 	clean(p->phys_base, mem_end);
 	__asm__ volatile("dsb sy" ::: "memory");
 	return entry_pa;
