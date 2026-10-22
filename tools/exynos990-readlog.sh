@@ -12,13 +12,25 @@
 #       it, where neither S-Boot nor TWRP writes, so it can be read at
 #       leisure; it does not contain XNU's own output though.
 #
-# Usage:  tools/exynos990-readlog.sh [prefix]
+# Usage:  tools/exynos990-readlog.sh [--fresh] [prefix]
 #   Run it before pressing Vol Up + Power: it blocks on adb and dumps the
-#   moment TWRP's adbd appears.
+#   moment TWRP's adbd appears.  With --fresh it first waits for adb to go
+#   away, so it does not capture the ring of the TWRP session you are still
+#   sitting in.
 set -e
 
 prefix=${1:-out/exynos990/lastlog}
 mkdir -p "$(dirname "$prefix")"
+
+if [ "$1" = "--fresh" ]; then
+	shift
+	printf 'waiting for adb to go away (reboot into the test image)'
+	while adb exec-out true >/dev/null 2>&1; do
+		printf '.'
+		sleep 0.5
+	done
+	echo ' gone'
+fi
 
 printf 'waiting for adbd'
 while ! adb exec-out true >/dev/null 2>&1; do
