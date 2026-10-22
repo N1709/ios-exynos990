@@ -19,11 +19,15 @@
 #   sitting in.
 set -e
 
+fresh=0
+if [ "$1" = "--fresh" ]; then
+	fresh=1
+	shift
+fi
 prefix=${1:-out/exynos990/lastlog}
 mkdir -p "$(dirname "$prefix")"
 
-if [ "$1" = "--fresh" ]; then
-	shift
+if [ "$fresh" = 1 ]; then
 	printf 'waiting for adb to go away (reboot into the test image)'
 	while adb exec-out true >/dev/null 2>&1; do
 		printf '.'
@@ -52,8 +56,8 @@ grab() {
 	fi
 }
 
+grab /sys/fs/pstore/dmesg-ramoops-0 "$prefix.dmesg.txt"
 grab /sys/fs/pstore/pmsg-ramoops-0 "$prefix.pmsg.txt"
-grab /proc/last_kmsg "$prefix.lastkmsg.txt"
 
 show() {
 	[ -f "$1" ] || return 0
@@ -73,7 +77,7 @@ show() {
 }
 
 found=0
-show "$prefix.lastkmsg.txt" && found=1
+show "$prefix.dmesg.txt" && found=1
 show "$prefix.pmsg.txt" && found=1
 
 if [ "$found" = 0 ]; then
@@ -82,8 +86,8 @@ if [ "$found" = 0 ]; then
 	echo "pmsg head (oldest bytes):"
 	[ -f "$prefix.pmsg.txt" ] && head -c 600 "$prefix.pmsg.txt"
 	echo
-	echo "last_kmsg head:"
-	[ -f "$prefix.lastkmsg.txt" ] && head -c 400 "$prefix.lastkmsg.txt"
+	echo "dmesg head:"
+	[ -f "$prefix.dmesg.txt" ] && head -c 400 "$prefix.dmesg.txt"
 	echo
 	echo "If pmsg is only TWRP's recoverycharge_status and last_kmsg only"
 	echo "S-Boot text, the loader did not run: the reset is before it."

@@ -94,38 +94,48 @@ static void klog_putc(char c)
 	klog_hdr[2] = klog_len;
 }
 
-/* ---- durable mirror ----
- * TWRP writes a line per second into the pmsg ring, so a failed boot's text
- * is gone after about three minutes.  Samsung's debug-snapshot reserves a
- * second, much bigger buffer for exactly this kind of log: log_kernel, 2 MiB
- * at DSS_START_ADDR + DSS_HEADER_SIZE = 0xFD900000 + 0x10000
- * (exynos9830-rmem.dtsi:79-81, debug-snapshot-def.h:55-56,71,85).  That is
- * what /proc/last_kmsg shows on this phone - 2 MiB of S-Boot text, ending in
- * "Starting kernel...".  S-Boot writes from the start of it, so the copy goes
- * one megabyte in, where nothing in the boot path writes; TWRP does not touch
- * the buffer at all.  Reading it needs no race:
+/* ---- durable sink ----
+ * TWRP fills the 16 KiB pmsg ring within seconds of starting (the ring is
+ * already full when adbd appears), so a failed boot's text cannot be read
+ * from there.  The pstore area has a second 16 KiB zone in front of it: the
+ * ramoops dump zone at 0xeb308000 (ramoops attaches 0x8000@0xeb308000 and
+ * splits it into record_size 16384 + pmsg_size 16384, see the phone's
+ * /sys/module/ramoops/parameters).  Nothing writes it on a normal boot -
+ * the file /sys/fs/pstore/dmesg-ramoops-0 on this phone was last modified
+ * on 2026-10-19 - so the loader writes its log there too and TWRP shows it
+ * at leisure:
  *
- *     cat /proc/last_kmsg | grep -a EXYNOS990
+ *     cat /sys/fs/pstore/dmesg-ramoops-0
+ *
+ * Format, all little endian (fs/pstore/ram.c:157-199, fs/pstore/ram_core.c):
+ *   0x000 persistent_ram header { u32 sig "DBGC", u32 start, u32 size }
+ *   0x00c data: "====<sec>.<usec>-D\n" then the text.  The "D" says the
+ *         record is not compressed; without a parsable header pstore drops
+ *         the record and deletes the zone.
  */
-#define MIRROR_PHYS		0xFDA10000u	/* log_kernel + 1 MiB */
+#define DUMP_PHYS		0xeb308000u
+#define DUMP_SIZE		0x4000u
+#define DUMP_CAP		(DUMP_SIZE - 12u)
 
-static void klog_mirror(const char *tail)
+static void klog_dump(void)
 {
-	static const char banner[] = "\n===== EXYNOS990 MIRROR =====\n";
-	volatile uint8_t *d = (volatile uint8_t *)MIRROR_PHYS;
+	static const char rec[] = "====0.0-D\n";
+	volatile uint32_t *h = (volatile uint32_t *)DUMP_PHYS;
+	volatile uint8_t *d = (volatile uint8_t *)(DUMP_PHYS + 12);
 	uint32_t n = 0;
 
-	for (const char *s = banner; *s; s++)
+	for (const char *s = rec; *s; s++)
 		d[n++] = (uint8_t)*s;
 
 	uint32_t start = (klog_len == KLOG_CAP) ? klog_off : 0;
-	for (uint32_t i = 0; i < klog_len && n < 0x80000u; i++)
+	for (uint32_t i = 0; i < klog_len && n + 2 < DUMP_CAP; i++)
 		d[n++] = klog_data[(start + i) % KLOG_CAP];
 
-	for (const char *s = tail; *s; s++)
-		d[n++] = (uint8_t)*s;
 	d[n++] = '\n';
-	d[n] = 0;
+	h[0] = 0x43474244u;	/* "DBGC" */
+	h[1] = n;
+	h[2] = n;
+	__asm__ volatile("dsb sy" ::: "memory");
 }
 
 /* ---- tiny console helpers ---- */
@@ -307,7 +317,7 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 	wdt_probe("wtcon_cl0", WDT_CL0);
 	wdt_probe("wtcon_cl2", WDT_CL2);
 	hw_facts();
-	klog_mirror("loader: reached hw_facts\n");
+	klog_dump();
 
 	if (fdt_ok(dtb)) {
 		uint64_t rd_start = 0, rd_end = 0;
@@ -474,7 +484,7 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 		out(c);
 	}
 	out("\n\nJUMP TO XNU\n");
-	klog_mirror("loader: reached JUMP TO XNU\n");
+	klog_dump();
 	clean(p->phys_base, mem_end);
 	__asm__ volatile("dsb sy" ::: "memory");
 	return entry_pa;
