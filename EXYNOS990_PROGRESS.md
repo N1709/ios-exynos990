@@ -293,3 +293,45 @@ has been observed.  Next step: take `out/kernel.development.exynos990` out of
 the `xnu-kernel` artifact, run
 `tools/exynos990-make-boot.sh <kernel> z3s`, flash the resulting
 `boot-z3s.img` to the boot partition and capture the UART log.
+
+## Boot attempt 1: image accepted, nothing on screen (2026-10-22)
+
+`out/exynos990/boot-z3s.img` (sha256 `4c85fe97...788c392`) was flashed to the
+boot partition.  The phone shows the Samsung logo, the screen goes off, the
+logo comes back: a reset loop.  S-Boot accepts the image and jumps to the
+loader (the logo is S-Boot's), but the loader only prints to the USI debug
+UART (`0x10540000`) and only *reads* DECON, it never draws, so a failure
+after the jump is invisible.  The boot partition has been restored.
+
+Log sinks found on the phone (TWRP/Android, `adb shell`):
+
+```
+/dev/pmsg0                 present (misc 247,0)
+/proc/last_kmsg            present, 2 MiB  (Samsung sec_log, S-Boot text)
+/sys/fs/pstore/dmesg-ramoops-0  present
+/sys/fs/pstore/pmsg-ramoops-0   present, 16372 bytes
+/dev/mem, /proc/kcore      absent
+```
+
+`/proc/iomem` has `eb308000-ed311fff : reserved`: the debug-snapshot area.
+Its first 32 KiB is `log_pstore` (`include/dt-bindings/soc/samsung/
+debug-snapshot-def.h:66,96-97`), and `lib/debug-snapshot-pstore.c:244-247`
+hands it to ramoops as 16 KiB dump + 16 KiB pmsg (`fs/pstore/ram.c:793-816`
+puts the pmsg zone last).  `pmsg-ramoops-0` is 16372 bytes = `0x4000 - 12`,
+the persistent_ram header, which confirms the ring size.
+
+Patch `0136` therefore sets:
+
+```c
+#define SWEET_KLOG_PHYS   0xeb30c000u   /* log_pstore + 16 KiB (pmsg) */
+#define SWEET_KLOG_SIZE   0x4000
+```
+
+and the loader now writes its own text into the same ring in
+`persistent_ram` format (sig `DBGC`, start, size, data), so after the reset
+`cat /sys/fs/pstore/pmsg-ramoops-0` shows loader + XNU text without UART.
+`pe_serial.c` no longer indexes past the data area when it continues a full
+ring (the old check assumed a 512 KiB sink).
+
+Not tested: whether XNU reaches `klog_init()` at all; whether S-Boot leaves
+`log_pstore` alone across the reset.

@@ -1,0 +1,54 @@
+diff --git a/pexpert/arm/pe_serial.c b/pexpert/arm/pe_serial.c
+index bd6e654..fa425b7 100644
+--- a/pexpert/arm/pe_serial.c
++++ b/pexpert/arm/pe_serial.c
+@@ -752,10 +752,16 @@ klog_init(void)
+ 		return;
+ 	}
+ 	klog_data = (volatile uint8_t *)(klog_hdr + 3);
+-	/* Continue after the loader's text if its header is sane. */
+-	if (klog_hdr[0] == 0x43474244u && klog_hdr[1] == klog_hdr[2] &&
+-	    klog_hdr[2] < KLOG_CAP - 0x10000) {
+-		klog_start = klog_size = klog_hdr[2];
++	/* Continue after the loader's text if its header is sane.  Only an
++	 * unfull ring has start == size (persistent_ram semantics); a full
++	 * one is restarted at the beginning of the data area instead of
++	 * indexing past its end. */
++	uint32_t start = klog_hdr[1];
++	uint32_t size = klog_hdr[2];
++	if (klog_hdr[0] == 0x43474244u && start < KLOG_CAP &&
++	    size <= KLOG_CAP && (size == KLOG_CAP || start == size)) {
++		klog_start = (size == KLOG_CAP) ? 0 : start;
++		klog_size = size;
+ 	} else {
+ 		klog_hdr[0] = 0x43474244u;
+ 		klog_start = klog_size = 0;
+diff --git a/pexpert/pexpert/arm64/EXYNOS990.h b/pexpert/pexpert/arm64/EXYNOS990.h
+index ddb9f02..10147bd 100644
+--- a/pexpert/pexpert/arm64/EXYNOS990.h
++++ b/pexpert/pexpert/arm64/EXYNOS990.h
+@@ -65,8 +65,22 @@
+ #define SWEET_TOUCH_GPIO_BASE         0x15850000u
+ #define SWEET_TOUCH_GPIO_DAT          0x24u       /* bank 0x020 + DAT 0x04 */
+ #define SWEET_TOUCH_DEFAULT           0           /* protocol not ported yet */
+-#define SWEET_KLOG_PHYS               0           /* TBC: TWRP pmsg address */
+-#define SWEET_KLOG_SIZE               0x80000
++/* RAM log sink: the pmsg half of Samsung's log_pstore zone, which TWRP
++ * exposes as /sys/fs/pstore/pmsg-ramoops-0.
++ *
++ *   include/dt-bindings/soc/samsung/debug-snapshot-def.h:66,96-97
++ *       DSS_LOG_PSTORE_SIZE = 32 KiB, DSS_LOG_PSTORE_ADDR = 0xeb310000-32K
++ *   lib/debug-snapshot-pstore.c:244-247
++ *       mem_size = size of "log_pstore", pmsg_size = record_size = half of it
++ *   fs/pstore/ram.c:793-816
++ *       the dump zone comes first, the pmsg zone last
++ *   live /proc/iomem on the phone: "eb308000-ed311fff : reserved", and
++ *   /sys/fs/pstore/pmsg-ramoops-0 is 16372 bytes = 0x4000 - sizeof(header).
++ *
++ * So the ring lives at 0xeb308000 + 0x4000, 16 KiB, persistent_ram format
++ * (sig "DBGC", start, size, data) - the same layout the loader writes. */
++#define SWEET_KLOG_PHYS               0xeb30c000u
++#define SWEET_KLOG_SIZE               0x4000
+ #define SWEET_USE_PHYS_TIMER          1
+ /* Physical timer: PPI 14 = INTID 30 (see the comment above). */
+ #define SWEET_VTIMER_INTID            30

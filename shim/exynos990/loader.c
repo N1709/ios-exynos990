@@ -56,10 +56,50 @@ _Static_assert(sizeof(struct boot_args) == 736, "boot_args size");
 
 uint64_t ex_boot_args;		/* boot_args PA, read by start.S */
 
+/* ---- RAM log sink -------------------------------------------------------
+ * Every line the loader prints also goes to TWRP's ramoops pmsg zone
+ * (board.h), in persistent_ram format, so the log survives the reset a
+ * failed boot causes.  XNU appends to the same ring (pe_serial.c), which
+ * makes /sys/fs/pstore/pmsg-ramoops-0 show loader + kernel text.. */
+#define KLOG_CAP	(KLOG_SIZE - 12)
+
+static volatile uint32_t *const klog_hdr = (volatile uint32_t *)KLOG_PHYS;
+static volatile uint8_t *const klog_data = (volatile uint8_t *)(KLOG_PHYS + 12);
+static uint32_t klog_off, klog_len;
+
+static void klog_init(void)
+{
+	/* Continue a ring left by an earlier run only when its header is
+	 * consistent (start == size, both inside the data area). */
+	uint32_t start = klog_hdr[1], size = klog_hdr[2];
+
+	if (klog_hdr[0] == 0x43474244u /* "DBGC" */ && start < KLOG_CAP &&
+	    size < KLOG_CAP && start == size) {
+		klog_off = klog_len = size;
+		return;
+	}
+	klog_hdr[0] = 0x43474244u;
+	klog_off = klog_len = 0;
+	klog_hdr[1] = 0;
+	klog_hdr[2] = 0;
+}
+
+static void klog_putc(char c)
+{
+	klog_data[klog_off] = (uint8_t)c;
+	klog_off = (klog_off + 1) % KLOG_CAP;
+	if (klog_len < KLOG_CAP)
+		klog_len++;
+	klog_hdr[1] = klog_off;
+	klog_hdr[2] = klog_len;
+}
+
 /* ---- tiny console helpers ---- */
 static void out(const char *s)
 {
 	con_puts(s);
+	while (*s)
+		klog_putc(*s++);
 }
 
 static void hex(uint64_t v)
@@ -188,6 +228,7 @@ static void hw_facts(void)
 uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 {
 	con_init();
+	klog_init();
 	out("\nEXYNOS990 LOADER BEGIN (ios-exynos990 exynos990 port)\n");
 	kv("EL", el);
 	kv("SCTLR", sctlr);
@@ -363,6 +404,7 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 	}
 	out("\n\nJUMP TO XNU\n");
 	clean(p->phys_base, mem_end);
+	__asm__ volatile("dsb sy" ::: "memory");
 	return entry_pa;
 }
 

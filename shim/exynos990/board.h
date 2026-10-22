@@ -57,6 +57,26 @@
 #define UART_USI_CON_RESET		(1u << 0)
 #define UART_USI_OPTION_CLKREQ_ON	(1u << 1)
 
+/* ---- Samsung log_pstore / pstore pmsg -----------------------------------
+ * The phone's /proc/iomem shows "eb308000-ed311fff : reserved" for the
+ * debug-snapshot area.  Its first 32 KiB is log_pstore
+ * (include/dt-bindings/soc/samsung/debug-snapshot-def.h:66,96-97:
+ * DSS_LOG_PSTORE_SIZE = 32 KiB at DSS_LOG_S2D_ADDR - 32 KiB).
+ * lib/debug-snapshot-pstore.c:244-247 hands it to ramoops with
+ * pmsg_size = record_size = mem_size / 2, and fs/pstore/ram.c:793-816
+ * lays the dump zone out first and the pmsg zone last, so the pmsg ring
+ * starts at log_pstore + 16 KiB.  TWRP exposes it as
+ * /sys/fs/pstore/pmsg-ramoops-0, and that file is 16372 bytes on the
+ * phone = 0x4000 - 12, which confirms the 16 KiB size.
+ *
+ * The loader writes its text there in persistent_ram format (sig "DBGC",
+ * start, size, ring data) and XNU appends to the same ring, so a forced
+ * reboot leaves loader + kernel output readable from TWRP without UART.
+ */
+#define LOG_PSTORE_BASE			0xeb308000UL
+#define KLOG_PHYS			0xeb30c000UL
+#define KLOG_SIZE			0x4000UL
+
 /* ---- GICv2 ---------------------------------------------------------------
  * exynos9830.dts: "gic:interrupt-controller@10100000", compatible
  * "arm,cortex-a15-gic" (GIC-400).  reg: 0x10101000 (distributor),
