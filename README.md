@@ -124,6 +124,20 @@ adb exec-out 'cat /sys/fs/pstore/pmsg-ramoops-0' > /tmp/pmsg.txt
 tr -d '\000' < /tmp/pmsg.txt | grep -a -A40 EXYNOS990
 ```
 
+TWRP fills that ring in about three minutes, so the loader also mirrors its
+own log into Samsung's 2 MiB `log_kernel` buffer (`0xFD900000 + 0x10000`,
+`exynos9830-rmem.dtsi:79-81`), one megabyte in - the buffer `/proc/last_kmsg`
+shows, where neither S-Boot nor TWRP writes:
+
+```bash
+adb shell 'cat /proc/last_kmsg' | tr -d '\000' | grep -a -A40 EXYNOS990
+```
+
+That copy only holds the loader's text (XNU writes to the ring), but it is
+enough to tell whether the jump was reached, and it survives as long as the
+phone is not power-cycled. `tools/exynos990-readlog.sh` dumps both sinks as
+soon as adbd appears.
+
 What the log already said in the first attempt (before the sink existed) and
 what it is expected to say is in `EXYNOS990_PROGRESS.md`.
 

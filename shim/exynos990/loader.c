@@ -94,6 +94,40 @@ static void klog_putc(char c)
 	klog_hdr[2] = klog_len;
 }
 
+/* ---- durable mirror ----
+ * TWRP writes a line per second into the pmsg ring, so a failed boot's text
+ * is gone after about three minutes.  Samsung's debug-snapshot reserves a
+ * second, much bigger buffer for exactly this kind of log: log_kernel, 2 MiB
+ * at DSS_START_ADDR + DSS_HEADER_SIZE = 0xFD900000 + 0x10000
+ * (exynos9830-rmem.dtsi:79-81, debug-snapshot-def.h:55-56,71,85).  That is
+ * what /proc/last_kmsg shows on this phone - 2 MiB of S-Boot text, ending in
+ * "Starting kernel...".  S-Boot writes from the start of it, so the copy goes
+ * one megabyte in, where nothing in the boot path writes; TWRP does not touch
+ * the buffer at all.  Reading it needs no race:
+ *
+ *     cat /proc/last_kmsg | grep -a EXYNOS990
+ */
+#define MIRROR_PHYS		0xFDA10000u	/* log_kernel + 1 MiB */
+
+static void klog_mirror(const char *tail)
+{
+	static const char banner[] = "\n===== EXYNOS990 MIRROR =====\n";
+	volatile uint8_t *d = (volatile uint8_t *)MIRROR_PHYS;
+	uint32_t n = 0;
+
+	for (const char *s = banner; *s; s++)
+		d[n++] = (uint8_t)*s;
+
+	uint32_t start = (klog_len == KLOG_CAP) ? klog_off : 0;
+	for (uint32_t i = 0; i < klog_len && n < 0x80000u; i++)
+		d[n++] = klog_data[(start + i) % KLOG_CAP];
+
+	for (const char *s = tail; *s; s++)
+		d[n++] = (uint8_t)*s;
+	d[n++] = '\n';
+	d[n] = 0;
+}
+
 /* ---- tiny console helpers ---- */
 static void out(const char *s)
 {
@@ -273,6 +307,7 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 	wdt_probe("wtcon_cl0", WDT_CL0);
 	wdt_probe("wtcon_cl2", WDT_CL2);
 	hw_facts();
+	klog_mirror("loader: reached hw_facts\n");
 
 	if (fdt_ok(dtb)) {
 		uint64_t rd_start = 0, rd_end = 0;
@@ -439,6 +474,7 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 		out(c);
 	}
 	out("\n\nJUMP TO XNU\n");
+	klog_mirror("loader: reached JUMP TO XNU\n");
 	clean(p->phys_base, mem_end);
 	__asm__ volatile("dsb sy" ::: "memory");
 	return entry_pa;

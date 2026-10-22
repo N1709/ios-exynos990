@@ -1,44 +1,68 @@
 #!/bin/sh
-# exynos990-readlog.sh - capture the RAM log the instant TWRP comes up.
+# exynos990-readlog.sh - capture the boot log from the phone.
 #
-# The sink is Samsung's pstore pmsg ring (0xeb30c000, 16 KiB).  TWRP itself
-# writes a "recoverycharge_status" line every second (~75 bytes), so it
-# overwrites the whole ring in about three and a half minutes.  Waiting
-# until TWRP is idle is therefore enough to lose the failed boot's text;
-# this script blocks on adb and dumps the file the second adbd appears.
+# Two sinks are checked, because they have very different lifetimes:
 #
-# Usage:  tools/exynos990-readlog.sh [output-file]
-#   run it BEFORE pressing Vol Up + Power, leave it waiting, then boot TWRP.
+#   /sys/fs/pstore/pmsg-ramoops-0  the 16 KiB pmsg ring at 0xeb30c000.  The
+#       loader and XNU both write here, but TWRP adds a line per second, so
+#       the text survives only ~3 minutes after TWRP starts.
+#
+#   /proc/last_kmsg  Samsung's 2 MiB log_kernel buffer (0xFD900000+0x10000,
+#       exynos9830-rmem.dtsi:79-81).  The loader mirrors its log 1 MiB into
+#       it, where neither S-Boot nor TWRP writes, so it can be read at
+#       leisure; it does not contain XNU's own output though.
+#
+# Usage:  tools/exynos990-readlog.sh [prefix]
+#   Run it before pressing Vol Up + Power: it blocks on adb and dumps the
+#   moment TWRP's adbd appears.
 set -e
 
-out=${1:-out/exynos990/last-pmsg.txt}
-mkdir -p "$(dirname "$out")"
+prefix=${1:-out/exynos990/lastlog}
+mkdir -p "$(dirname "$prefix")"
 
-echo "waiting for adbd (boot TWRP now, do not wait after it appears)..."
+echo "waiting for adbd (boot TWRP now)..."
 adb wait-for-device
 
-raw=$(mktemp)
-adb exec-out 'cat /sys/fs/pstore/pmsg-ramoops-0' > "$raw" || true
-tr -d '\000' < "$raw" > "$out" 2>/dev/null || cp "$raw" "$out"
-rm -f "$raw"
+grab() {
+	# $1 = device path, $2 = output file
+	adb exec-out "cat $1" > "$2.raw" 2>/dev/null || rm -f "$2.raw"
+	if [ -s "$2.raw" ]; then
+		tr -d '\000' < "$2.raw" > "$2" 2>/dev/null || cp "$2.raw" "$2"
+		rm -f "$2.raw"
+		echo "saved $2 ($(wc -c < "$2" | tr -d ' ') bytes)"
+	else
+		rm -f "$2.raw"
+		echo "no $1"
+	fi
+}
 
-echo "saved $out ($(wc -c < "$out" | tr -d ' ') bytes)"
+grab /sys/fs/pstore/pmsg-ramoops-0 "$prefix.pmsg.txt"
+grab /proc/last_kmsg "$prefix.lastkmsg.txt"
 
-if grep -aq 'EXYNOS990' "$out"; then
-	echo "--- loader/XNU text found ---"
-	tr -d '\000' < "$out" | grep -a -A40 'EXYNOS990' | head -60
-	exit 0
+show() {
+	[ -f "$1" ] || return 0
+	if grep -aq 'EXYNOS990' "$1"; then
+		echo "--- $1 ---"
+		grep -a -n 'EXYNOS990' "$1" | tail -3
+		grep -a -A40 'MIRROR' "$1" 2>/dev/null | tail -40 || true
+		return 0
+	fi
+	return 1
+}
+
+found=0
+show "$prefix.lastkmsg.txt" && found=1
+show "$prefix.pmsg.txt" && found=1
+
+if [ "$found" = 0 ]; then
+	echo
+	echo "no EXYNOS990 text in either sink."
+	echo "pmsg head (oldest bytes):"
+	[ -f "$prefix.pmsg.txt" ] && head -c 600 "$prefix.pmsg.txt"
+	echo
+	echo "last_kmsg head:"
+	[ -f "$prefix.lastkmsg.txt" ] && head -c 400 "$prefix.lastkmsg.txt"
+	echo
+	echo "If pmsg is only TWRP's recoverycharge_status and last_kmsg only"
+	echo "S-Boot text, the loader did not run: the reset is before it."
 fi
-
-if grep -aq 'XNU console' "$out"; then
-	echo "--- XNU started, but the banner line is outside the window ---"
-	tr -d '\000' < "$out" | grep -a -A40 'XNU console' | head -60
-	exit 0
-fi
-
-echo "no EXYNOS990 marker in the ring. oldest bytes first:"
-tr -d '\000' < "$out" | head -c 1200
-echo
-echo
-echo "If this is only TWRP's own 'recoverycharge_status' spam, the log was"
-echo "already overwritten (or the loader never ran): rerun and dump sooner."

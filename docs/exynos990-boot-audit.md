@@ -24,6 +24,7 @@ from the Samsung Android kernel tree only.
 | 14 | The RAM log ring is Samsung's pmsg zone: `log_pstore` (`0xeb308000`, 32 KiB) split into 16 KiB dump + 16 KiB pmsg, so `0xeb30c000` | `debug-snapshot-def.h:66,96-97`, `debug-snapshot-pstore.c:244-247`, `fs/pstore/ram.c:793-816`; phone: `pmsg-ramoops-0` is 16372 bytes = `0x4000 - 12` | **measured** |
 | 15 | The ring format is `persistent_ram`: `sig = "DBGC" (0x43474244)`, `start`, `size`, then the data | `fs/pstore/ram_core.c:32-39` | static, matches the A5XELTE sink that TWRP already reads |
 | 16 | XNU's `kprintf` reaches the ring even with no serial device registered | `pexpert/arm/pe_serial.c:uart_putc_options_` (patch `0136`) | static; before the patch only the framebuffer console fed the ring |
+| 17 | The loader's log also lands in the 2 MiB `log_kernel` buffer that `/proc/last_kmsg` reads, 1 MiB in, where S-Boot does not write | `exynos9830-rmem.dtsi:79-81`, `debug-snapshot-def.h:55-56,71,85`; phone: `/proc/last_kmsg` is 2 MiB of S-Boot text ending in "Starting kernel..." | **measured** (the buffer and its size), the mirror itself untested |
 
 ## What the next boot should show
 
