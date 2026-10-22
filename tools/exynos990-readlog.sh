@@ -41,10 +41,16 @@ grab /proc/last_kmsg "$prefix.lastkmsg.txt"
 
 show() {
 	[ -f "$1" ] || return 0
-	if grep -aq 'EXYNOS990' "$1"; then
+	# "EXYNOS990" alone also matches the kernel's "Machine model: ... based
+	# on EXYNOS990" line, so only the loader's own banner counts.
+	if grep -aq 'EXYNOS990 LOADER BEGIN' "$1"; then
 		echo "--- $1 ---"
-		grep -a -n 'EXYNOS990' "$1" | tail -3
-		grep -a -A40 'MIRROR' "$1" 2>/dev/null | tail -40 || true
+		grep -a -A40 'EXYNOS990 LOADER BEGIN' "$1" | head -50
+		return 0
+	fi
+	if grep -aq 'XNU console' "$1"; then
+		echo "--- $1 ---"
+		grep -a -B3 -A40 'XNU console' "$1" | head -50
 		return 0
 	fi
 	return 1
@@ -56,7 +62,7 @@ show "$prefix.pmsg.txt" && found=1
 
 if [ "$found" = 0 ]; then
 	echo
-	echo "no EXYNOS990 text in either sink."
+	echo "no loader text in either sink."
 	echo "pmsg head (oldest bytes):"
 	[ -f "$prefix.pmsg.txt" ] && head -c 600 "$prefix.pmsg.txt"
 	echo
