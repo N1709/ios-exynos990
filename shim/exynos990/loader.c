@@ -499,13 +499,19 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 	 * in LowExceptionVectorBase (a page of `b .`) with no console at all -
 	 * exactly the silence on the phone.  Anchor both bases at the segment
 	 * that carries the Mach header (file offset 0), the way iBoot does. */
+	/* The payload stores file_off relative to itself (the first segment
+	 * starts at 0x3e8, not 0), so pick the segment with the lowest vmaddr
+	 * instead: that is __TEXT, whose first byte is the Mach header. */
 	uint64_t kva0 = p->virt_base, kpa0 = p->phys_base;
+	int have_anchor = 0;
 	for (uint64_t i = 0; i < nsegs; i++) {
 		const volatile struct payload_seg *s = &p->segs[i];
-		if (s->file_off == 0 && s->file_size) {
+		if (!s->file_size || s->vmaddr < p->virt_base)
+			continue;
+		if (!have_anchor || s->vmaddr < kva0) {
+			have_anchor = 1;
 			kva0 = s->vmaddr;
 			kpa0 = p->phys_base + (s->vmaddr - p->virt_base);
-			break;
 		}
 	}
 

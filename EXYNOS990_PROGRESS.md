@@ -162,7 +162,8 @@ the MMU came up fetched from `0x8a42d000` instead of `0x891431000`, and the
 CPU spun in `LowExceptionVectorBase` (a page of `b .`) with no console —
 exactly the silence that was observed, and it explains why not even
 `klog_init` ran. The loader now anchors `virtBase`/`physBase`/`memSize` at
-the segment with file offset 0, the way iBoot does. Copy destinations,
+the segment with the lowest `vmaddr` (`__TEXT`, whose first byte is the Mach
+header), the way iBoot does. Copy destinations,
 `deviceTreeP` and `entry_pa` do not move, because only the common offset
 `virtBase - physBase` matters for them.
 
