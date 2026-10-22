@@ -242,6 +242,15 @@ static void kv(const char *k, uint64_t v)
 /* ---- memory helpers (MMU off: everything is Device memory) ---- */
 static void copy(uintptr_t dst, uintptr_t src, uint64_t n)
 {
+	/* memmove, not memcpy: sboot places the ramdisk *below* the XNU
+	 * window (0x88080000 against 0x890000000 here), so the destination
+	 * overlaps the tail of the source and a forward copy would overwrite
+	 * bytes it has not read yet. */
+	if (dst > src && dst < src + n) {
+		for (; n; n--)
+			((volatile uint8_t *)dst)[n - 1] = ((volatile uint8_t *)src)[n - 1];
+		return;
+	}
 	if (!((dst | src) & 7)) {
 		for (; n >= 8; n -= 8, dst += 8, src += 8)
 			*(volatile uint64_t *)dst = *(volatile uint64_t *)src;
@@ -465,41 +474,14 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 	 * never appears the loader did not execute at all. */
 	paint_band(&fb, 0xff00ff00u);
 
-	/* sboot leaves the previous OS's data in RAM (Android, or a previous
-	 * loader run); iBoot hands XNU zeroed memory, so zero it here - but
-	 * keep the buffer the display is scanning out, if it lives inside
-	 * the window: zeroing it would blank the panel. */
-	out("zeroing XNU RAM...\n");
-	uintptr_t fb_lo = 0, fb_hi = 0;
-	if (fb.found && fb.stride && fb.height) {
-		fb_lo = fb.phys;
-		fb_hi = fb_lo + (uint64_t)fb.stride * fb.height;
-	}
-	/* iBoot zeroes all of RAM.  Doing that here is not free: with the MMU
-	 * off every 8-byte store is a separate Device access, and 512 MiB of
-	 * them takes long enough for the bootloader's own reset timer to fire
-	 * (the phone loops with reset_reason RPON).  The VM zeroes pages when
-	 * it hands them out, so only the area XNU touches before its VM runs
-	 * has to start clean: 64 MiB is plenty and takes a fraction of a
-	 * second. */
-	uint64_t zero_len = p->mem_size;
-	if (zero_len > 64u * 1024u * 1024u)
-		zero_len = 64u * 1024u * 1024u;
-	uintptr_t zero_end = p->phys_base + zero_len;
-	if (fb_hi > fb_lo && fb_lo < zero_end && fb_hi > p->phys_base) {
-		uintptr_t lo = fb_lo < p->phys_base ? p->phys_base : fb_lo;
-		uintptr_t hi = fb_hi > zero_end ? zero_end : fb_hi;
-		zero(p->phys_base, lo - p->phys_base);
-		zero(hi, zero_end - hi);
-		out("kept the display buffer ");
-		hex(lo);
-		out(" ");
-		hex(hi - lo);
-		out("\n");
-	} else {
-		zero(p->phys_base, zero_len);
-	}
-	out("zeroed\n");
+	/* No bulk wipe.  sboot leaves the previous OS's data in RAM, but the
+	 * VM zeroes every page it hands out and the kernel image, BSS and
+	 * boot_args are written explicitly below.  The wipe was also harmful:
+	 * the payload sits at 0x88080000 and ends at 0x89066290, so zeroing
+	 * the window at 0x890000000 erased the payload's own ADT and segment
+	 * table before they were read, and this is where the boot stopped
+	 * ("zeroing" was the last line). */
+	mark('9');
 	mark('9');
 
 	for (uint64_t i = 0; i < nsegs; i++) {
