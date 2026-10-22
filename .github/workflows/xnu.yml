@@ -35,16 +35,13 @@ jobs:
   build:
     permissions:
       contents: write
-    # macos-14 is the only image left that ships Xcode 15, whose iig matches
-    # xnu-8796 (macos-13 was retired in Dec 2025; macos-15 and 15-intel ship
-    # Xcode 16+, whose iig emits IORPC.kernelContent).  That pins this job to
-    # the arm64 pool, which GitHub sometimes queues for several minutes.
-    #
-    # Same shape as the ios-sweet workflow:
-    # macos-14, the same blacktop/darwin-xnu-build revision, the same steps.
-    # macos-13 is gone from GitHub's hosted pool, so a job asking for it
-    # never gets a runner.
-    runs-on: macos-14
+    # macos-15-intel, measured: jobs on macos-14 wait minutes in the arm64
+    # pool (it is deprecated), while macos-15-intel, macos-26-intel,
+    # macos-15 and macos-26 all got a runner within 20 seconds (see
+    # runner-probe.yml).  Intel also gives 4 vCPU/14 GB instead of 3/7.
+    # Xcode 15 is not needed: 0083-xcode27-iig-kernel-content.patch adds the
+    # kernelContent field that Xcode 16+ iig emits.
+    runs-on: macos-15-intel
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
@@ -78,7 +75,10 @@ jobs:
           sudo chmod +x /usr/local/bin/xcodes
           sw_vers
           ls -d /Applications/Xcode*.app
-          XC=$(ls -d /Applications/Xcode_*.app | sort -V | head -1)
+          # Newest Xcode: 0083 handles the IORPC.kernelContent that Xcode 16+
+          # iig emits, so there is no reason to prefer an old one.
+          XC=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1)
+          [ -n "$XC" ] || XC=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
           echo "DEVELOPER_DIR=$XC/Contents/Developer" >> "$GITHUB_ENV"
           sudo xcode-select -s "$XC"
           xcodebuild -version
