@@ -15,10 +15,12 @@ Board facts used here:
   - DRAM: the high bank at 0x880000000.  The Exynos maps its DRAM banks in
     the 36-bit space: the low 2 GiB at 0x80000000 and the next bank at
     0x880000000 (the S8 shows the same layout: 0x80000000-0xbc7fffff,
-    0xc0000000-0xffffffff, 0x880000000-0x8ffffffff).  Only 512 MiB are
-    handed to XNU: the S8 port panicked in kmem_range_init with the whole
-    2 GiB bank, so the same conservative size is used here until the 990
-    has been measured (see --dram-size).
+    0xc0000000-0xffffffff, 0x880000000-0x8ffffffff).  The bank's first
+    0xAD00000 bytes are sec_rdx_bootdev, the bootloader's RAM-dump carveout
+    (the phone's /proc/iomem shows it as reserved), so XNU starts after it.
+    Only 512 MiB are handed to XNU: the S8 port panicked in kmem_range_init
+    with the whole 2 GiB bank, so the same conservative size is used here
+    until the 990 has been measured (see --dram-size).
   - GICv2 (GIC-400): GICD 0x10101000, GICC 0x10102000, "arm,cortex-a15-gic"
     (exynos9830.dts: gic:interrupt-controller@10100000).  The reg property
     holds the two pairs as offsets from the /arm-io ranges base 0x10000000,
