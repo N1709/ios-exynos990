@@ -253,7 +253,10 @@ static void copy(uintptr_t dst, uintptr_t src, uint64_t n)
  * it survives the AP watchdog reset.  That page is _intstack at
  * 0xfffffe00084ac000 -> PA 0x8924ac000 in this kernel.  Print it and clear
  * it for the next kernel.  Remove with sweet_early_mark (patch 0127). */
+#define XMARK_KVA  0xfffffe00084ac000ull
 #define XMARK_PHYS 0x8924ac000ull
+
+static uint32_t g_run;	/* loader run counter, rides in the mark page */
 
 static void fill(uintptr_t dst, uint64_t n, uint8_t v)
 {
@@ -360,6 +363,14 @@ static void pt_report(uint64_t pt_pa, uint64_t entry_va, uint64_t entry_pa)
 		kv("ptid", d);
 		kv("->pa", d & 0x0000ffffffe00000ull);
 		kv("want", entry_pa & ~0x1fffffull);
+		out("\n");
+	}
+	{
+		/* The stack top and the mark page: arm_init's prologue and the
+		 * marks both write there, so both must be mapped. */
+		uint64_t d = pt_walk(pt_pa, XMARK_KVA + 0x8000 - 0x1000);
+
+		kv("ptstk", d);
 		out("\n");
 	}
 }
@@ -474,6 +485,23 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 		volatile char *m = (volatile char *)(uintptr_t)XMARK_PHYS;
 		char line[80];
 		int n = 0;
+
+		/* arm_init's prologue stores x29/x30 at sp+0xc0, i.e. the last
+		 * two words below _intstack_top.  If arm_init ever ran, that
+		 * word holds the return address into common_start; if it is
+		 * zero the CPU never got there.  This does not depend on our
+		 * mark code at all. */
+		out("stk=");
+		hex(*(volatile uint64_t *)(uintptr_t)(XMARK_PHYS + 0x8000 - 0x10));
+		out(",");
+		hex(*(volatile uint64_t *)(uintptr_t)(XMARK_PHYS + 0x8000 - 0x8));
+		out("\n");
+		/* The previous run left its sequence number at the end of the
+		 * mark page (written after the segment copy, so it survives
+		 * until the next run reads it). */
+		g_run = *(volatile uint32_t *)(uintptr_t)(XMARK_PHYS + 0xf00);
+		kv("run", g_run);
+		out("\n");
 
 		/* Always show the first 32 bytes, whatever they are: a zero
 		 * page means the kernel never wrote, our "XMARK" text means
@@ -679,6 +707,11 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 		hex(s->vmsize);
 		out("\n");
 	}
+
+	/* Hand the next run its sequence number (the copy above zeroed the
+	 * mark page). */
+	*(volatile uint32_t *)(uintptr_t)(XMARK_PHYS + 0xf00) = g_run + 1;
+	__asm__ volatile("dsb sy" ::: "memory");
 
 	mark('A');
 
