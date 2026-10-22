@@ -57,8 +57,8 @@ jobs:
             # (S8 boot 2). Same flags as tools/a5xelte-build-firehose.sh.
             # The Exynos 990 (A55/A76/M5) implements LSE, but the boot core
             # that runs this code may be an A55, so keep the ARMv8.0 flags.
-            sed -i '' "s/ARCHS=\"x86_64 arm64e\" VALID_ARCHS=\"x86_64 arm64e\"/ARCHS=arm64 VALID_ARCHS=arm64 OTHER_CFLAGS='-mkernel -nostdinc -Wno-packed -mcpu=cortex-a53 -march=armv8-a+crypto'/" dxb/build.sh
-            grep -c "VALID_ARCHS=arm64 OTHER_CFLAGS='-mkernel -nostdinc -Wno-packed -mcpu=cortex-a53" dxb/build.sh
+            sed -i '' "s/ARCHS=\"x86_64 arm64e\" VALID_ARCHS=\"x86_64 arm64e\"/ARCHS=arm64 VALID_ARCHS=arm64 OTHER_CFLAGS='-mkernel -Wno-packed -mcpu=cortex-a53 -march=armv8-a+crypto'/" dxb/build.sh
+            grep -c "VALID_ARCHS=arm64 OTHER_CFLAGS='-mkernel -Wno-packed -mcpu=cortex-a53" dxb/build.sh
           else
             sed -i '' 's/ARCHS="x86_64 arm64e" VALID_ARCHS="x86_64 arm64e"/ARCHS="x86_64 arm64e arm64" VALID_ARCHS="x86_64 arm64e arm64"/' dxb/build.sh
             grep -c 'VALID_ARCHS="x86_64 arm64e arm64"' dxb/build.sh

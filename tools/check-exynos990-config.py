@@ -103,6 +103,22 @@ def main():
         check(case is not None and 'EXYNOS990' in case.group(1),
               f'{script} stages its sources for EXYNOS990')
 
+    # Makefile conditionals that gate a board in or out: a list that names
+    # SWEET/A5XELTE but not EXYNOS990 silently drops the include paths of
+    # the staged sources (BearSSL, libpthread, HFS) for this board.
+    filters = []
+    for root, dirnames, filenames in os.walk(tree):
+        dirnames[:] = [d for d in dirnames if d not in ('.git', 'build', 'obj')]
+        for name in filenames:
+            if not name.endswith(('Makefile.template', 'Makefile', '.def', '.cfg')):
+                continue
+            path = os.path.join(root, name)
+            for m in re.finditer(r'filter \$\(CURRENT_MACHINE_CONFIG\),([^)]*)\)', read(path)):
+                if 'EXYNOS990' not in m.group(1).split():
+                    filters.append(f'{os.path.relpath(path, tree)}: {m.group(1)}')
+    check(not filters, 'every machine-config filter in the build includes EXYNOS990' +
+          ('' if not filters else ': ' + '; '.join(filters[:4])))
+
     # syscalls.master is preprocessed with the build defines; a syscall left
     # out of it has no generated `struct <syscall>_args`, and the kernel file
     # that defines the function then fails with an incomplete type.
