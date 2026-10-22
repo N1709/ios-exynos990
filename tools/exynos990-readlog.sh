@@ -20,8 +20,12 @@ set -e
 prefix=${1:-out/exynos990/lastlog}
 mkdir -p "$(dirname "$prefix")"
 
-echo "waiting for adbd (boot TWRP now)..."
-adb wait-for-device
+printf 'waiting for adbd'
+while ! adb exec-out true >/dev/null 2>&1; do
+	printf '.'
+	sleep 0.5
+done
+echo ' up'
 
 grab() {
 	# $1 = device path, $2 = output file
