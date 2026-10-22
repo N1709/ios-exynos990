@@ -1,0 +1,114 @@
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+index 6de1613..825c98e 100644
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -84,6 +84,9 @@ extern void sweet_usb_probe(void);
+  */
+ #define EXYNOS_UFS              1
+ #define VS_UTRL_NEXUS_TYPE      0x40
++/* UFS protector: UFSPRSECURITY holds the descriptor type in bits 20:19
++ * (DESCTYPE 3 = the FMP descriptor of the secure monitor). */
++#define UFP_UFSPRSECURITY       0x10
+ #define UFS_WLUN_DEVICE         0xd0
+ #if defined(EXYNOS990)
+ /*
+@@ -112,7 +115,6 @@ extern void sweet_usb_probe(void);
+ #else
+ #define PRDT_CHUNK      (256u << 10)            /* PRDT byte count field: 18 bits */
+ #endif
+-#define PRDT_MAX        (BOUNCE_SIZE / PRDT_CHUNK)
+ #define CMD_TIMEOUT_NS  (5ull * NSEC_PER_SEC)
+ #define CMD_SPIN_NS     (50ull * NSEC_PER_USEC)
+ #define CMD_SLEEP_NS    (200ull * NSEC_PER_USEC)
+@@ -124,12 +126,19 @@ struct utrd {
+ 	uint32_t prdt;          /* [31:16] PRDT offset (DWORDs), [15:0] entries */
+ };
+ 
++/* One PRDT entry.  With the FMP descriptor type (the protector of the
++ * 9830 can report DESCTYPE 3) an entry is 128 bytes: these 16 bytes
++ * followed by the 112-byte FMP crypto table, which a bypassed transfer
++ * leaves zero. */
++struct prdt_entry {
++	uint32_t addr_lo, addr_hi, rsvd, dbc;
++};
++
++#define PRDT_AREA       4096u           /* PRDT space in the UCD */
+ struct ucd {
+ 	uint8_t cmd[512];
+ 	uint8_t resp[512];
+-	struct {
+-		uint32_t addr_lo, addr_hi, rsvd, dbc;
+-	} prdt[PRDT_MAX];
++	uint8_t prdt[PRDT_AREA];        /* struct prdt_entry, stride 16 or 128 */
+ };
+ 
+ /* Layout of the contiguous DMA allocation. */
+@@ -141,6 +150,8 @@ struct ucd {
+ static struct {
+ 	vm_offset_t regs;
+ 	vm_offset_t vs_regs;                    /* Exynos vendor HCI registers */
++	vm_offset_t prot_regs;                  /* UFS protector (FMP/SMU) registers */
++	uint32_t prdt_stride;                   /* 16, or 128 with the FMP table */
+ 	vm_offset_t dma;                        /* kernel VA of the DMA allocation */
+ 	uint64_t dma_pa;
+ 	uint8_t lun;
+@@ -221,12 +232,14 @@ ufs_scsi(const uint8_t *cdb, unsigned cdb_len, uint32_t len, bool write)
+ 		uint32_t n = 0;
+ 		for (uint32_t done = 0; done < len; done += PRDT_CHUNK, n++) {
+ 			uint32_t chunk = MIN(PRDT_CHUNK, len - done);
+-			ucd->prdt[n].addr_lo = (uint32_t)(bounce_pa + done);
+-			ucd->prdt[n].addr_hi = (uint32_t)((bounce_pa + done) >> 32);
+-			ucd->prdt[n].dbc = chunk - 1;
++			struct prdt_entry *e = (struct prdt_entry *)
++			    (ucd->prdt + n * su.prdt_stride);
++			e->addr_lo = (uint32_t)(bounce_pa + done);
++			e->addr_hi = (uint32_t)((bounce_pa + done) >> 32);
++			e->dbc = chunk - 1;
+ 		}
+ #if defined(EXYNOS_UFS)
+-		utrd->prdt = 1024u << 16 | (n * (uint32_t)sizeof(ucd->prdt[0]));
++		utrd->prdt = 1024u << 16 | (n * su.prdt_stride);
+ #else
+ 		utrd->prdt = (1024u / 4) << 16 | n;
+ #endif
+@@ -495,6 +508,12 @@ sweet_ufs_strategy(buf_t bp)
+ 		uint64_t lba = pos / UFS_BLOCK;
+ 		uint32_t skip = (uint32_t)(pos % UFS_BLOCK);
+ 		uint32_t want = MIN(count - done, BOUNCE_SIZE - skip);
++		/* one PRDT holds at most PRDT_AREA / stride entries, each
++		 * covering PRDT_CHUNK bytes; the first block may be partial */
++		uint32_t prdt_io = (PRDT_AREA / su.prdt_stride) * PRDT_CHUNK;
++		if (prdt_io > skip && want > prdt_io - skip) {
++			want = prdt_io - skip;
++		}
+ 		uint32_t blocks = (skip + want + UFS_BLOCK - 1) / UFS_BLOCK;
+ 		void *bounce = (void *)(su.dma + DMA_BOUNCE);
+ 		if (rd) {
+@@ -670,9 +689,27 @@ sweet_ufs_init(void)
+ 	su.cache = (cache == 1);
+ 	su.wait = (wait == 1);
+ 
++	su.prdt_stride = 16;
+ 	su.regs = ml_io_map(reg[0], reg[1]);
+ #if defined(EXYNOS_UFS)
+ 	su.vs_regs = ml_io_map(reg[2], reg[3]);
++	/* The UFS protector block: UFSPRSECURITY holds the descriptor type
++	 * the host expects.  DESCTYPE 3 means 128 byte PRDT entries (the FMP
++	 * descriptor of the secure monitor); the plain 16 byte entries this
++	 * driver builds are only valid below that. */
++	su.prot_regs = (size >= 6 * sizeof(uintptr_t)) ? ml_io_map(reg[4], reg[5]) : 0;
++	if (su.prot_regs) {
++		uint32_t sec = *(volatile uint32_t *)(su.prot_regs + UFP_UFSPRSECURITY);
++		uint32_t desctype = (sec >> 19) & 3;
++
++		/* DESCTYPE 3 = the FMP descriptor: 128 byte entries, the 16 byte
++		 * PRDT entry followed by the 112 byte crypto table of the secure
++		 * monitor.  A bypassed transfer only needs the table zeroed,
++		 * which the bzero of the UCD already does for us. */
++		su.prdt_stride = (desctype == 3) ? 128 : 16;
++		printf("SWEET UFS: protector UFSPRSECURITY 0x%x desctype %u "
++		    "prdt stride %u\n", sec, desctype, su.prdt_stride);
++	}
+ #endif
+ 	if (kmem_alloc_contig(kernel_map, &su.dma, DMA_SIZE, PAGE_MASK, 0, 0,
+ 	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {

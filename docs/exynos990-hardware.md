@@ -1251,3 +1251,27 @@ six `unsigned long` fields) carries `v_baseAddr`, `v_display`, `v_rowBytes`,
 `PE_state.video` (`pexpert/arm/pe_init.c:406-413`) and `PE_current_console`
 returns that to IOKit.  The loader fills it from the DECON probe, so the
 kernel console and the framebuffer driver do not need a build-time address.
+
+## UFS descriptor types (plain PRDT and FMP)
+
+The host reads its command descriptors through the UFS protector block
+(`0x132A0000`).  `UFSPRSECURITY` (`0x10`) bits 20:19 are `DESCTYPE`:
+
+| DESCTYPE | PRDT entry | Where the table comes from |
+|---|---|---|
+| 0-2 | 16 bytes (`base`, `upper`, `reserved`, `size`) | the driver builds it |
+| 3 | 128 bytes: the 16-byte entry followed by the 112-byte FMP crypto table | `struct fmp_table_setting`, `include/crypto/fmp.h` |
+
+With DESCTYPE 3 the FMP library receives `prdt_off = sizeof(struct
+ufshcd_sg_entry)` (16) and `prdt_cnt = number of segments`
+(`drivers/scsi/ufs/ufs-exynos-fmp.c:104-112`), i.e. it fills only the
+112-byte tail of each 128-byte descriptor and leaves the standard entry at
+offset 0 untouched.  A bypassed transfer (no bio crypt context) calls
+`exynos_fmp_bypass()`, which leaves the table in its reset state, so a
+zeroed tail plus the normal 16-byte entry is a valid bypassed descriptor.
+The Android side selects the type through `exynos_smc(SMC_CMD_FMP_SECURITY,
+0, fmp_id, CFG_DESCTYPE_3)` (`drivers/crypto/fmp/fmp.c:697-710`).
+
+`bsd/dev/sweet_ufs.c` therefore reads `DESCTYPE` and uses a 128-byte stride
+when it is 3 (patch `0128`), capping one request at
+`PRDT_AREA / stride * 4 KiB` (128 KiB with the FMP table, 1 MiB plain).
