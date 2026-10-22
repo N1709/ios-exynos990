@@ -331,7 +331,8 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 	kv("DTB", dtb);
 	out("\n");
 	mark('4');
-	if (el != 1)
+	/* CurrentEL[3:2] is the exception level: EL1 reads as 0x4, not 1. */
+	if ((el >> 2) != 1)
 		return fail("not entered at EL1");
 	mark('5');
 	/* The watchdog probe used to read 0x10050000/0x10060000 here and the
@@ -354,7 +355,17 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 		out("no DTB in x0 (expected on Exynos)\n");
 	}
 
-	uintptr_t rd_start = find_payload();
+	/* sboot does pass a device tree in x0 (0x8a080000 on this phone) and
+	 * it records where it put our ramdisk, so trust it first: the header
+	 * address is only a hint once the bootloader relocates things. */
+	uintptr_t rd_start = 0;
+	if (fdt_ok(dtb)) {
+		uint64_t s = 0;
+		if (fdt_chosen_u64(dtb, "linux,initrd-start", &s) && s)
+			rd_start = (uintptr_t)s;
+	}
+	if (!rd_start || !magic_ok((const volatile char *)rd_start))
+		rd_start = find_payload();
 	if (!rd_start)
 		return fail("no SWEETXNU payload in the ramdisk");
 	mark('7');
