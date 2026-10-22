@@ -101,11 +101,10 @@ jobs:
           rc=${PIPESTATUS[0]}
           if [ "$rc" -ne 0 ]; then
             strip() { perl -pe 's/\e\[[0-9;]*m//g'; }
-            grep -E 'error:|Error [0-9]+|\*\*\* .*Stop\.|^make\[[0-9]+\]:' /tmp/xnu-build.log \
-              | strip | sort -u | head -10 \
+            # GitHub keeps only the first 10 annotations of a step, so the tail
+            # goes first: the end of the log is where the failure is.
+            tail -n 10 /tmp/xnu-build.log | strip \
               | while IFS= read -r line; do echo "::error::$line"; done
-            tail -n 25 /tmp/xnu-build.log | strip \
-              | while IFS= read -r line; do echo "::error::(tail) $line"; done
             {
               echo '### Build failed (rc='$rc')'
               echo '```'
