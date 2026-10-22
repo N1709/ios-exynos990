@@ -1299,3 +1299,22 @@ The XNU side (`bsd/dev/samsung_touch.c`, patch `0129`) now takes the bus,
 address and GPIO block from the 990 board header; the register protocol is
 still the one of the S8's S6SY761, which is why `SWEET_TOUCH_DEFAULT` stays 0
 until the Y79A protocol is ported.
+
+### The Y79A register protocol (for the port)
+
+The 990's sec_ts is the Y79A family (`drivers/input/touchscreen/sec_ts/y79a/`),
+not the S6SY761 of the S8.  The command set the XNU driver has to speak:
+
+| Command | Value | Source |
+|---|---|---|
+| `SEC_TS_CMD_SENSE_ON` | `0x10` | `sec_ts/y79a/sec_ts.h:150` |
+| `SEC_TS_READ_ONE_EVENT` | `0x60` | `sec_ts/y79a/sec_ts.h:181` |
+| `SEC_TS_READ_ALL_EVENT` | `0x61` | `sec_ts/y79a/sec_ts.h:182` |
+
+The event packet is read from `0x60` after the interrupt line falls; the
+report id is the first byte of the packet (the S8 driver already parses the
+same sec_ts event layout, so the parser in `bsd/dev/samsung_touch.c` can be
+reused once the command constants and the power/reset sequence are the
+Y79A ones).  What is still missing for E5 is exactly that: the Y79A power
+and reset sequence (`sec_ts_fn.c`), the firmware check (`sec_ts_fw.c`) and a
+run on the phone to confirm the panel coordinates.
