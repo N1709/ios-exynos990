@@ -122,9 +122,16 @@ _(none yet — milestone E1 has not been flashed)_
   pages, GICv2 support) like the S8 port does; the ADT identity lists
   `samsung,a5xelte` so the platform expert matches. Build on the macOS CI
   (`gh` is not available on this host, so kernel builds cannot run here).
-- **E3 — storage.** `bsd/dev/sweet_ufs.c` reads the UFS host from the ADT
-  node; the Exynos 9830 vendor SFR block (`0x13101100`) may differ from
-  the 8895's — the S8 port's `sweet_ufs.c` is the starting point.
+- **E3 — storage.** The driver reads the host from the ADT node
+  (`/exynos990-ufs`: HCI `0x13100000`, vendor block `0x13101100`,
+  protector `0x132A0000`) and handles both descriptor types the protector
+  can report: 16-byte entries (DESCTYPE 0-2) and the 128-byte FMP
+  descriptor (DESCTYPE 3: the standard entry plus the zeroed 112-byte
+  crypto table, valid for a bypassed transfer).  9830 specifics that are
+  already in: byte granular UTRD offsets, 4 KiB per PRDT entry
+  (`PRDT_SET_SIZE(12)`), inverted UTRLCLR and no `USE_OF_HCE`.  Remaining:
+  read USERDATA on the phone once XNU runs, and the GPT/partition read
+  that E6 needs.
 - **E4 — display.** Done differently from the S8: the 9830 has no
   `bootloaderfb` device tree property, but the Samsung bootloader **leaves
   DECON running** (`LCD_ON_UBOOT`, see
