@@ -84,7 +84,29 @@ jobs:
         env:
           # keep going after errors so one run reports every compile failure
           MAKEFLAGS: ${{ inputs.keep_going == 'false' && '' || '-k' }}
-        run: bash build.sh
+        run: |
+          # The run log needs a token to download, so on failure publish the
+          # error lines where they are readable without one: as annotations
+          # and as the job summary of this run.
+          set -o pipefail
+          bash build.sh 2>&1 | tee /tmp/xnu-build.log
+          rc=$?
+          if [ "$rc" -ne 0 ]; then
+            grep -E 'error:|Error [0-9]+|\*\*\* .*Stop\.' /tmp/xnu-build.log \
+              | perl -pe 's/\e\[[0-9;]*m//g' | sort -u > /tmp/xnu-errors.txt
+            n=0
+            while IFS= read -r line && [ "$n" -lt 20 ]; do
+              echo "::error::$line"
+              n=$((n + 1))
+            done < /tmp/xnu-errors.txt
+            {
+              echo '### Build failed'
+              echo '```'
+              tail -n 200 /tmp/xnu-build.log | perl -pe 's/\e\[[0-9;]*m//g'
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$rc"
 
       - name: Check the Exynos 990 board configuration
         if: always()
