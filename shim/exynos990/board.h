@@ -27,8 +27,8 @@
 /* Fallback search range for the payload container, in case sboot ignores
  * the ramdisk address from the header (some Samsung loaders relocate the
  * ramdisk).  The whole boot region is scanned in 16-byte steps. */
-#define BOOT_SCAN_START			RAMDISK_LOAD_ADDR
-#define BOOT_SCAN_END			0x14000000UL
+#define BOOT_SCAN_START			0x80000000UL
+#define BOOT_SCAN_END			0x8c000000UL
 
 /* ---- USI debug UART ------------------------------------------------------
  * exynos9830-usi.dtsi: "serial_0: uart@10540000", compatible

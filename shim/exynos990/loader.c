@@ -286,11 +286,14 @@ static uint64_t fail(const char *why)
  * for the container magic as a fallback. */
 static uintptr_t find_payload(void)
 {
-	uintptr_t p = (uintptr_t)RAMDISK_LOAD_ADDR;
+	/* Never touch an address outside DRAM: an undecoded address does not
+	 * fault here, it stalls the AXI bus and the boot dies silently.  The
+	 * header's ramdisk address (0x11000000) is one of those. */
+	if (RAMDISK_LOAD_ADDR >= LOW_RAM_BASE && RAMDISK_LOAD_ADDR < LOW_RAM_END &&
+	    magic_ok((const volatile char *)RAMDISK_LOAD_ADDR))
+		return (uintptr_t)RAMDISK_LOAD_ADDR;
 
-	if (magic_ok((const volatile char *)p))
-		return p;
-	for (p = (uintptr_t)BOOT_SCAN_START; p < (uintptr_t)BOOT_SCAN_END; p += 16)
+	for (uintptr_t p = (uintptr_t)BOOT_SCAN_START; p < (uintptr_t)BOOT_SCAN_END; p += 16)
 		if (magic_ok((const volatile char *)p))
 			return p;
 	return 0;
@@ -298,11 +301,34 @@ static uintptr_t find_payload(void)
 
 /* A DTB handed over in x0 would let us read /chosen/linux,initrd-start;
  * sboot on Exynos does not pass one, but the loader checks anyway. */
-static int fdt_ok(uintptr_t dtb)
+/* The FDT magic is big endian on the wire: the bytes d0 0d fe ed load as
+ * 0xedfe0dd0 on a little-endian core.  Comparing the loaded word with
+ * 0xd00dfeed rejected every real device tree, which is why the loader fell
+ * through to the payload scan and then hung reading 0x11000000 - an address
+ * this SoC does not decode at all. */
+static uintptr_t dtb_fdt(uintptr_t dtb)
 {
+	const volatile uint8_t *b;
+
 	if (dtb < LOW_RAM_BASE || dtb >= LOW_RAM_END)
 		return 0;
-	return *(volatile uint32_t *)dtb == 0xd00dfeedU;
+	b = (const volatile uint8_t *)dtb;
+	if (b[0] == 0xd0 && b[1] == 0x0d && b[2] == 0xfe && b[3] == 0xed)
+		return dtb;
+
+	/* Samsung packs several FDTs in a table (magic 1e ab b7 d7); sboot
+	 * may hand over the table instead of the selected FDT. */
+	if (b[0] == 0x1e && b[1] == 0xab && b[2] == 0xb7 && b[3] == 0xd7) {
+		volatile uint32_t *w = (volatile uint32_t *)dtb;
+		uint32_t eoff = w[5];
+		uintptr_t e = dtb + eoff;
+		uint32_t off = *(volatile uint32_t *)(e + 4);
+		uintptr_t f = dtb + off;
+
+		if (off && f >= LOW_RAM_BASE && f < LOW_RAM_END)
+			return f;
+	}
+	return 0;
 }
 
 /* ---- what the firmware left us ----
@@ -355,24 +381,27 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 	mark('6');
 	klog_dump();
 
-	if (fdt_ok(dtb)) {
+	uintptr_t fdt = dtb_fdt(dtb);
+	if (fdt) {
 		uint64_t rd_start = 0, rd_end = 0;
-		if (fdt_chosen_u64(dtb, "linux,initrd-start", &rd_start) &&
-		    fdt_chosen_u64(dtb, "linux,initrd-end", &rd_end))
+		kv("fdt", fdt);
+		out("\n");
+		if (fdt_chosen_u64(fdt, "linux,initrd-start", &rd_start) &&
+		    fdt_chosen_u64(fdt, "linux,initrd-end", &rd_end))
 			kv("dt initrd", rd_start);
 		kv("dt end", rd_end);
 		out("\n");
 	} else {
-		out("no DTB in x0 (expected on Exynos)\n");
+		out("no usable FDT in x0\n");
 	}
 
 	/* sboot does pass a device tree in x0 (0x8a080000 on this phone) and
 	 * it records where it put our ramdisk, so trust it first: the header
 	 * address is only a hint once the bootloader relocates things. */
 	uintptr_t rd_start = 0;
-	if (fdt_ok(dtb)) {
+	if (fdt) {
 		uint64_t s = 0;
-		if (fdt_chosen_u64(dtb, "linux,initrd-start", &s) && s)
+		if (fdt_chosen_u64(fdt, "linux,initrd-start", &s) && s)
 			rd_start = (uintptr_t)s;
 	}
 	if (!rd_start || !magic_ok((const volatile char *)rd_start))
