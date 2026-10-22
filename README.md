@@ -30,18 +30,24 @@ image v2, so the port has its own loader in `shim/exynos990/`.
 
 | Item | What it is | State | Tested |
 | --- | --- | --- | --- |
-| E1 | Loader: arm64 Image for S-Boot, UART, UFS probe, payload copy, jump to XNU | done | builds, flashed: S-Boot accepts the image and resets in a loop; nothing on screen |
-| E2 | XNU board config, patches `0125`–`0136` | done | macOS CI builds it (`xnu-kernel` artifact), static checker passes; **never ran on the phone** |
+| E1 | Loader: arm64 Image for S-Boot, UART, UFS probe, payload copy, jump to XNU | done | flashed: S-Boot accepts the image, the loader reads its DTB, finds the payload, copies all ten segments into the XNU window, builds ADT + `boot_args` and jumps; log ends at `JUMP TO XNU` |
+| E2 | XNU board config, patches `0125`–`0136` | in progress | CI builds it (`xnu-kernel` artifact) and the handoff is proven on the phone, but **XNU has not printed anything yet**; `0136` moved its klog to the ramoops dump zone (`0xeb308000`) to capture the first text |
 | E3 | UFS: protector/descriptor type, plain 16-byte and FMP 128-byte PRDT, GPT | 90% | code, not on a phone |
-| E4 | Display: DECON probe, `boot_args.Video` handoff, framebuffer console | 85% | code, not on a phone |
-| E5 | Touch: bus/IRQ wiring per model, Y79A command set | 40% | wiring only |
-| E6 | iOS root in USERDATA (NativeUfs) | 0% | — |
+| E4 | Display: DECON probe, `boot_args.Video` handoff, framebuffer console | 85% | probe runs on the phone but reads `stride=0`/`base=0` on z3s, so no framebuffer is handed to XNU yet |
+| E5 | Touch: bus/IRQ wiring per model, Y79A command set | 40% | wiring only; the z3s bus/IRQ is not confirmed |
+| E6 | iOS root in USERDATA (NativeUfs) | 0% | out of scope until E3–E5 run on the phone |
 
-**State 2026-10-22:** the macOS CI builds the kernel (run `39770435460`,
-artifact `xnu-kernel`, 66,649,065 bytes) and the boot image built from it is
-accepted by S-Boot, but the phone only shows the splash screen in a reset
-loop: nothing has executed far enough to print. The port now has a RAM log
-sink (below) so the next boot can be diagnosed without a UART.
+**State 2026-10-22 (late):** the boot chain to XNU is complete on the phone.
+S-Boot accepts the v2 image, the loader reads the S-Boot device tree, finds
+the payload, copies all ten segments into the XNU window at `0x890000000`,
+builds the ADT and `boot_args`, and jumps: `JUMP TO XNU` is the last line of
+the loader log. The loader prints through a RAM sink in the ramoops *dump*
+zone (`0xeb308000`), which TWRP does not overwrite, so every boot is
+diagnosable without UART or framebuffer. What is still unproven is XNU
+itself: it has produced no output yet. Patch `0136` moved XNU's own klog
+into the same dump zone (run `39809245853`, artifact `xnu-kernel`), so the
+next boot either shows its early text or nothing — which separates "XNU dies
+before the console exists" from "XNU runs silently".
 
 Offline testing: the loader is cross-built with `aarch64-linux-gnu-gcc`, the
 whole boot chain is exercised by `tools/exynos990-selftest.py` with a stand-in

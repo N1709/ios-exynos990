@@ -151,27 +151,25 @@ _(none yet — milestone E1 has not been flashed)_
 - **E6 — iOS root.** Flash the iPhone X root into USERDATA (like the S8
   port did) and boot with `rd=md0` once storage works.
 
-## Next action
+## Next action (scope: E3–E5, E6 deferred)
 
-1. **Run the XNU build on the macOS CI.** The repository has no Actions run
-   yet (`total_count 0` in the API), so the workflow has to be started by
-   hand: GitHub → *Actions* → *xnu* → *Run workflow* (machine config
-   `EXYNOS990`).  Until that build is green, the XNU side of the port is
-   only verified statically (`tools/check-exynos990-config.py`).
-2. **Flash the boot image** (TWRP, backup the `boot` partition first) and
-   read the UART log: `tools/exynos990-make-boot.sh <kernel> z3s` builds
-   the image, `docs/exynos990-flash.md` has the procedure.  The log gives
-   the boot MPIDR, the GIC type, the timer frequency and the UFS
-   `prdt_stride` (16 = plain PRDT, 128 = FMP `DESCTYPE 3`).
-3. **Collect the board facts** with `tools/exynos990-collect.sh` in TWRP:
-   the DRAM banks (`/proc/iomem`), the timer PPI (`/proc/interrupts`),
-   the pstore/ramoops address and the partition list.  They fill
-   `SWEET_BOOT_MPIDR`, `SWEET_KLOG_PHYS` and the `dram-size` of the ADT.
-4. Read the exact SM-number off the About-phone screen and note it here.
+E1 is done on the phone and E2 is one boot away from being either proven or
+localised, so the work now is the three stages that make the device usable.
+Order matters: E4 is the debugging tool for the other two.
 
-After that: E3 (UFS: the FMP descriptor path if `prdt_stride` is 128, and
-the read of USERDATA), E4 (DECON), E5 (touch), E6 (iOS root in USERDATA
-with the NativeUfs driver).
+1. **E4 — display/console.** Fix the DECON probe on z3s: it reads
+   `stride=0`/`base=0` although window 5 is enabled at 1440x3200, so
+   `boot_args.Video` is not set and XNU has no framebuffer console. Once
+   set, XNU's early text and panics paint on the panel with no UART.
+2. **E3 — UFS.** Read the GPT and USERDATA on the phone with the NativeUfs
+   driver, and confirm `prdt_stride` from the protector registers (16 =
+   plain PRDT, 128 = FMP `DESCTYPE 3`).
+3. **E5 — touch.** Bus/IRQ wiring for z3s first (the x1s values in the
+   driver are `hsi2c_15`, 0x48, `gpm21` and must not be assumed), then the
+   Y79A command set.
+
+E6 (iOS root in USERDATA) stays out of scope until these three run on the
+phone; it depends on E3 in any case.
 
 ## First CI build (run 39706196610, 2026-10-22)
 
