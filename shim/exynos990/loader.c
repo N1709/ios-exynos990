@@ -166,8 +166,32 @@ static void klog_dump(void)
 
 	d[n++] = '\n';
 	h[0] = 0x43474244u;	/* "DBGC" */
-	h[1] = n;
-	h[2] = n;
+	h[1] = 0;		/* start: the record begins at data[0] */
+	h[2] = n;		/* size: n bytes of record */
+
+	__asm__ volatile("dsb sy" ::: "memory");
+}
+
+/* ---- progress marks ----
+ * The loader now runs (sboot accepts the v2 image) but hangs somewhere
+ * before klog_dump().  Each mark overwrites the ramoops dump zone with a
+ * record naming the last step that was reached, so one boot says exactly
+ * where it stops - no UART, no screen, no timing.
+ */
+static void mark(char c)
+{
+	static const char rec[] = "====0.0-D\nMARK ";
+	volatile uint32_t *h = (volatile uint32_t *)DUMP_PHYS;
+	volatile uint8_t *d = (volatile uint8_t *)(DUMP_PHYS + 12);
+	uint32_t n = 0;
+
+	for (const char *s = rec; *s; s++)
+		d[n++] = (uint8_t)*s;
+	d[n++] = (uint8_t)c;
+	d[n++] = '\n';
+	h[0] = 0x43474244u;	/* "DBGC" */
+	h[1] = 0;		/* start */
+	h[2] = n;		/* size */
 	__asm__ volatile("dsb sy" ::: "memory");
 }
 
@@ -226,40 +250,6 @@ static void zero(uintptr_t dst, uint64_t n)
 }
 
 
-/* ---- watchdog ----
- * sboot arms Samsung's watchdog before it hands over (watchdog_cl0@10050000
- * and watchdog_cl2@10060000, timeout-sec = <30> in exynos9830.dts:1990-2012,
- * layout in drivers/watchdog/s3c2410_wdt.c:46-56: WTCON bit 5 enables the
- * timer, bit 0 the reset).  Nothing in the port pets it, so every boot is
- * reset after the timeout - which looks exactly like the logo loop.  Log
- * the state of both controllers and turn them off for the bring-up, so a
- * hang stays a hang and the pmsg log survives.
- */
-#define WDT_CL0			0x10050000UL
-#define WDT_CL2			0x10060000UL
-#define WDT_WTCON		0x00
-#define WDT_WTDAT		0x04
-#define WDT_WTCNT		0x08
-#define WTCON_ENABLE		(1u << 5)
-
-static void wdt_probe(const char *tag, uintptr_t base)
-{
-	uint32_t con = *(volatile uint32_t *)(base + WDT_WTCON);
-	uint32_t dat = *(volatile uint32_t *)(base + WDT_WTDAT);
-	uint32_t cnt = *(volatile uint32_t *)(base + WDT_WTCNT);
-
-	kv(tag, con);
-	kv("dat", dat);
-	kv("cnt", cnt);
-	out("\n");
-	if (con & WTCON_ENABLE) {
-		*(volatile uint32_t *)(base + WDT_WTCON) = 0;
-		out("watchdog disabled: ");
-		out(tag);
-		out("\n");
-	}
-}
-
 static int magic_ok(const volatile char *m)
 {
 	const char *want = "SWEETXNU";
@@ -275,6 +265,7 @@ static uint64_t fail(const char *why)
 	out("FAIL: ");
 	out(why);
 	out("\n");
+	klog_dump();		/* leave the reason where TWRP can read it */
 	return 0;
 }
 
@@ -328,18 +319,28 @@ static void hw_facts(void)
 
 uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 {
+	mark('0');
 	con_init();
+	mark('1');
 	klog_init();
+	mark('2');
 	out("\nEXYNOS990 LOADER BEGIN (ios-exynos990 exynos990 port)\n");
+	mark('3');
 	kv("EL", el);
 	kv("SCTLR", sctlr);
 	kv("DTB", dtb);
 	out("\n");
+	mark('4');
 	if (el != 1)
 		return fail("not entered at EL1");
-	wdt_probe("wtcon_cl0", WDT_CL0);
-	wdt_probe("wtcon_cl2", WDT_CL2);
+	mark('5');
+	/* The watchdog probe used to read 0x10050000/0x10060000 here and the
+	 * boot stopped at MARK 4: on this phone an access to a block whose
+	 * clock is gated does not fault, it stalls the bus forever.  The
+	 * reset loop was sboot rejecting header_version 0, not a watchdog,
+	 * so nothing needs to touch those controllers. */
 	hw_facts();
+	mark('6');
 	klog_dump();
 
 	if (fdt_ok(dtb)) {
@@ -356,6 +357,7 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 	uintptr_t rd_start = find_payload();
 	if (!rd_start)
 		return fail("no SWEETXNU payload in the ramdisk");
+	mark('7');
 	kv("payload", rd_start);
 	out("\n");
 
@@ -394,17 +396,18 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 	if (kernel_end >= mem_end)
 		return fail("kernel larger than the RAM window");
 
-	/* Read-only UFS probe before the RAM window is wiped: it reports the
-	 * host state sboot left, reads the GPT and prints the USERDATA, BOOT
-	 * and SYSTEM extents.  The scratch area is inside the XNU window, so
-	 * it is zeroed right afterwards. */
-	ufs_probe(kv, out, UFS_DMA_BASE);
+	/* The read-only UFS probe is disabled for now: like the watchdog and
+	 * the debug UART, the UFS controller may be clock-gated by the time
+	 * sboot hands over, and a gated access hangs the bus instead of
+	 * faulting.  It only printed diagnostics, so it can come back once
+	 * the jump works. */
 
 	/* The bootloader programs the display before it hands over (the
 	 * Android DPU driver calls this "LCD_ON_UBOOT"), so the DECON
 	 * registers describe the panel of this model.  Read them: the window
 	 * geometry, the image size and the address of the buffer the
 	 * bootloader draws into.  Read-only. */
+	mark('8');
 	struct decon_fb fb;
 	decon_probe(kv, out, &fb);
 	/* First visible sign of life, milliseconds after entry: if this band
@@ -446,6 +449,7 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 		zero(p->phys_base, zero_len);
 	}
 	out("zeroed\n");
+	mark('9');
 
 	for (uint64_t i = 0; i < nsegs; i++) {
 		const volatile struct payload_seg *s = &p->segs[i];
@@ -465,6 +469,7 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 		out("\n");
 	}
 
+	mark('A');
 	uintptr_t adt_pa = kernel_end;
 	uintptr_t ba_pa = (adt_pa + p->adt_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
 	if (ba_pa + PAGE_SIZE > mem_end)
@@ -519,6 +524,7 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 		char c[2] = { p->cmdline[i], 0 };
 		out(c);
 	}
+	mark('B');
 	out("\n\nJUMP TO XNU\n");
 	klog_dump();
 	paint_band(&fb, 0xff0000ffu);	/* blue: about to branch into XNU */

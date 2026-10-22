@@ -10,6 +10,19 @@
 #include "board.h"
 #include "console.h"
 
+/* The mark trace put the loader's stop at "MARK 2": ex_main entered, con_init
+ * returned, klog_init returned, and the first out() - the only step between
+ * mark 2 and mark 3 - never came back.  out() calls con_puts() first, and
+ * con_putc() polls UART_UTRSTAT waiting for TXE.  On a production phone the
+ * debug UART is not wired to anything: sboot never brings the USI block up,
+ * the TX FIFO never drains, and the poll can also stall the bus on an
+ * unclocked block.  Nothing on the other end would read it anyway, so the
+ * console is compiled out; the loader's text goes to the ramoops dump zone,
+ * which needs no hardware at all. */
+#ifndef CON_UART
+#define CON_UART 0
+#endif
+
 #define REG(off)	(*(volatile uint32_t *)(UART_BASE + (off)))
 
 /* Give up instead of hanging the boot when the UART is not wired up. */
@@ -17,6 +30,8 @@
 
 void con_init(void)
 {
+	if (!CON_UART)
+		return;
 	/* USI_RESET is active high: set it, then clear it, like the driver. */
 	REG(UART_USI_CON) = UART_USI_CON_RESET;
 	REG(UART_USI_CON) = 0;
@@ -33,6 +48,9 @@ void con_init(void)
 
 void con_putc(char c)
 {
+	if (!CON_UART)
+		return;
+
 	uint32_t spin = TX_TIMEOUT;
 
 	while (!(REG(UART_UTRSTAT) & UART_UTRSTAT_TXE)) {
