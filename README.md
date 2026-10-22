@@ -31,20 +31,23 @@ image v2, so the port has its own loader in `shim/exynos990/`.
 
 | Item | What it is | State | Tested |
 | --- | --- | --- | --- |
-| E1 | Loader: arm64 Image for S-Boot, UART, UFS probe, payload copy, jump to XNU | done | build + self test, **not on a phone** |
-| E2 | XNU board config, patches `0125`–`0130` | done | static checker + `git apply`; first CI build stopped on a missing `SUPPORTED_*` entry (fixed in `0130`), **not compiled yet** |
+| E1 | Loader: arm64 Image for S-Boot, UART, UFS probe, payload copy, jump to XNU | done | builds, flashed: S-Boot accepts the image and resets in a loop; nothing on screen |
+| E2 | XNU board config, patches `0125`–`0136` | done | macOS CI builds it (`xnu-kernel` artifact), static checker passes; **never ran on the phone** |
 | E3 | UFS: protector/descriptor type, plain 16-byte and FMP 128-byte PRDT, GPT | 90% | code, not on a phone |
 | E4 | Display: DECON probe, `boot_args.Video` handoff, framebuffer console | 85% | code, not on a phone |
 | E5 | Touch: bus/IRQ wiring per model, Y79A command set | 40% | wiring only |
 | E6 | iOS root in USERDATA (NativeUfs) | 0% | — |
 
-**Nothing has booted on a phone yet, and the XNU kernel has not been compiled
-yet** (the macOS CI workflow has never run). Everything above that says
-"tested" is offline testing: the loader is cross-built with
-`aarch64-linux-gnu-gcc`, the whole boot chain is exercised by
-`tools/exynos990-selftest.py` with a stand-in kernel for all seven models, and
-the XNU side is checked statically by `tools/check-exynos990-config.py`
-because the kernel only builds on macOS.
+**State 2026-10-22:** the macOS CI builds the kernel (run `39770435460`,
+artifact `xnu-kernel`, 66,649,065 bytes) and the boot image built from it is
+accepted by S-Boot, but the phone only shows the splash screen in a reset
+loop: nothing has executed far enough to print. The port now has a RAM log
+sink (below) so the next boot can be diagnosed without a UART.
+
+Offline testing: the loader is cross-built with `aarch64-linux-gnu-gcc`, the
+whole boot chain is exercised by `tools/exynos990-selftest.py` with a stand-in
+kernel for all seven models, and the XNU side is checked statically by
+`tools/check-exynos990-config.py` because the kernel only builds on macOS.
 
 Hardware facts come from the Samsung Android kernel tree
 `android_kernel_samsung_exynos990`, never from guesswork; every value is cited
@@ -66,9 +69,10 @@ with its source file and line in `docs/exynos990-hardware.md`.
 | `tools/exynos990-selftest.py` | self test of the chain, no phone needed (7 models) |
 | `tools/check-exynos990-config.py` | static check of the XNU board configuration |
 | `tools/exynos990-collect.sh` | reads the board facts off the phone (TWRP) |
-| `xnu/patches/` | XNU patches, applied in order (`0125`–`0130`) |
+| `xnu/patches/` | XNU patches, applied in order (`0125`–`0136`) |
 | `docs/exynos990-hardware.md` | hardware facts, each with its Android kernel source |
 | `docs/exynos990-flash.md` | flashing procedure and the UART log |
+| `docs/exynos990-boot-audit.md` | every handoff assumption of the boot chain, with its status |
 | `EXYNOS990_PROGRESS.md` | port log: milestones, evidence, open questions |
 
 ## Build and flash
@@ -89,6 +93,31 @@ The full procedure, the UART log and what to read from it are in
 timer PPI, log RAM, partitions) come from `tools/exynos990-collect.sh` in
 TWRP.
 
+## Boot attempts and the RAM log
+
+S-Boot accepts the image, but every boot so far ends in a reset loop: the
+Samsung splash screen, the screen goes dark, the splash screen again. The
+loader prints to the USI debug UART only (`0x10540000`, 115200 8N1), so with
+no UART adapter the failure is invisible - which is why the port now also
+writes to a RAM log that survives the reset.
+
+The sink is Samsung's `log_pstore` zone, the first 32 KiB of the
+debug-snapshot area (`/proc/iomem` on the phone: `eb308000-ed311fff`).
+`lib/debug-snapshot-pstore.c` hands it to ramoops as a 16 KiB dump zone
+followed by a 16 KiB pmsg zone, so the ring is at **`0xeb30c000`**. The loader
+and XNU both append to it in `persistent_ram` format (sig `DBGC`, start, size,
+data), and TWRP exposes it as `/sys/fs/pstore/pmsg-ramoops-0`:
+
+```bash
+# after a failed boot, boot TWRP and read the log
+adb shell 'cat /sys/fs/pstore/pmsg-ramoops-0' | strings | tail -80
+# or look for the kernel's own part
+adb shell 'cat /sys/fs/pstore/pmsg-ramoops-0' | grep -a -A40 EXYNOS990
+```
+
+What the log already said in the first attempt (before the sink existed) and
+what it is expected to say is in `EXYNOS990_PROGRESS.md`.
+
 ## Known limits
 
 - no framebuffer re-programming: the kernel draws into the buffer the
@@ -97,7 +126,7 @@ TWRP.
 - touch: the Y79A power/reset and firmware check are not ported yet, the
   driver stays off
 - no iOS root in USERDATA yet
-- no phone has booted this port
+- no phone has booted this port: the kernel has not printed anything yet
 
 ## Origin
 

@@ -159,6 +159,40 @@ static void clean(uintptr_t start, uintptr_t end)
 	__asm__ volatile("dsb sy" ::: "memory");
 }
 
+/* ---- watchdog ----
+ * sboot arms Samsung's watchdog before it hands over (watchdog_cl0@10050000
+ * and watchdog_cl2@10060000, timeout-sec = <30> in exynos9830.dts:1990-2012,
+ * layout in drivers/watchdog/s3c2410_wdt.c:46-56: WTCON bit 5 enables the
+ * timer, bit 0 the reset).  Nothing in the port pets it, so every boot is
+ * reset after the timeout - which looks exactly like the logo loop.  Log
+ * the state of both controllers and turn them off for the bring-up, so a
+ * hang stays a hang and the pmsg log survives.
+ */
+#define WDT_CL0			0x10050000UL
+#define WDT_CL2			0x10060000UL
+#define WDT_WTCON		0x00
+#define WDT_WTDAT		0x04
+#define WDT_WTCNT		0x08
+#define WTCON_ENABLE		(1u << 5)
+
+static void wdt_probe(const char *tag, uintptr_t base)
+{
+	uint32_t con = *(volatile uint32_t *)(base + WDT_WTCON);
+	uint32_t dat = *(volatile uint32_t *)(base + WDT_WTDAT);
+	uint32_t cnt = *(volatile uint32_t *)(base + WDT_WTCNT);
+
+	kv(tag, con);
+	kv("dat", dat);
+	kv("cnt", cnt);
+	out("\n");
+	if (con & WTCON_ENABLE) {
+		*(volatile uint32_t *)(base + WDT_WTCON) = 0;
+		out("watchdog disabled: ");
+		out(tag);
+		out("\n");
+	}
+}
+
 static int magic_ok(const volatile char *m)
 {
 	const char *want = "SWEETXNU";
@@ -236,6 +270,8 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 	out("\n");
 	if (el != 1)
 		return fail("not entered at EL1");
+	wdt_probe("wtcon_cl0", WDT_CL0);
+	wdt_probe("wtcon_cl2", WDT_CL2);
 	hw_facts();
 
 	if (fdt_ok(dtb)) {

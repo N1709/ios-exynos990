@@ -1,5 +1,5 @@
 diff --git a/pexpert/arm/pe_serial.c b/pexpert/arm/pe_serial.c
-index bd6e654..fa425b7 100644
+index bd6e654..0e5e6ab 100644
 --- a/pexpert/arm/pe_serial.c
 +++ b/pexpert/arm/pe_serial.c
 @@ -752,10 +752,16 @@ klog_init(void)
@@ -23,6 +23,55 @@ index bd6e654..fa425b7 100644
  	} else {
  		klog_hdr[0] = 0x43474244u;
  		klog_start = klog_size = 0;
+@@ -822,9 +828,6 @@ fbcon_transmit_ready(void)
+ static void
+ fbcon_transmit_data(uint8_t c)
+ {
+-#if defined(SWEET_HAS_KLOG) && SWEET_HAS_KLOG
+-	klog_putc(c);
+-#endif
+ 	if (c == '\r') {
+ 		fbcon_col = 0;
+ 		return;
+@@ -1008,6 +1011,13 @@ serial_init(void)
+ 		return 1;
+ 	}
+ 
++#if defined(SWEET_HAS_KLOG) && SWEET_HAS_KLOG
++	/* The klog sink needs neither a framebuffer nor a UART: it is plain
++	 * RAM that the loader and the kernel append to, so bring it up before
++	 * the device lookups below can bail out. */
++	klog_init();
++#endif
++
+ 	soc_base = pe_arm_get_soc_base_phys();
+ 
+ 	if (soc_base == 0) {
+@@ -1017,11 +1027,6 @@ serial_init(void)
+ 	PE_parse_boot_argn("disable-uart-irq", &disable_uart_irq, sizeof(disable_uart_irq));
+ 
+ 	fbcon_probe();
+-#if defined(SWEET_HAS_KLOG) && SWEET_HAS_KLOG
+-	/* The klog sink does not need a framebuffer: it is plain RAM that
+-	 * the loader and the kernel append to. */
+-	klog_init();
+-#endif
+ 
+ #ifdef PI3_UART
+ 	if (SecureDTFindEntry("name", "gpio", &entryP) == kSuccess) {
+@@ -1252,6 +1257,12 @@ uart_putc_options_(char c, bool poll, bool force)
+ {
+ 	struct pe_serial_functions *fns = gPESF;
+ 
++#if defined(SWEET_HAS_KLOG) && SWEET_HAS_KLOG
++	/* Log the character even when no serial device is registered: on the
++	 * Exynos 990 the klog ring is the only console there is. */
++	klog_putc((uint8_t)c);
++#endif
++
+ 	while (fns != NULL) {
+ 		if (force || serial_do_transmit) {
+ 			while (!fns->transmit_ready()) {
 diff --git a/pexpert/pexpert/arm64/EXYNOS990.h b/pexpert/pexpert/arm64/EXYNOS990.h
 index ddb9f02..10147bd 100644
 --- a/pexpert/pexpert/arm64/EXYNOS990.h
