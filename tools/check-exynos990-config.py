@@ -70,6 +70,17 @@ def main():
     mk = read(os.path.join(tree, 'makedefs', 'MakeInc.def'))
     check('MACHINE_FLAGS_ARM64_EXYNOS990' in mk and '-DARM64_BOARD_CONFIG_EXYNOS990' in mk,
           'MakeInc.def defines MACHINE_FLAGS_ARM64_EXYNOS990')
+    # MakeInc.kernel rejects any machine config missing from this list:
+    #   *** Unsupported CURRENT_MACHINE_CONFIG EXYNOS990.  Stop.
+    # (The list appears three times; the _Sim and _host branches set NONE.)
+    supported = re.findall(r'^SUPPORTED_ARM64_MACHINE_CONFIGS = ([^\n]*)$', mk, re.M)
+    check(any('EXYNOS990' in s.split() for s in supported),
+          'MakeInc.def lists EXYNOS990 in SUPPORTED_ARM64_MACHINE_CONFIGS')
+    # Generic ARMv8 boards are plain arm64, not Apple's arm64e: the 990 has
+    # no pointer authentication keys set up by the loader.
+    plain = re.search(r'^ifeq \(\$\(filter \$\(CURRENT_MACHINE_CONFIG\),([^)]*)\),\)$', mk, re.M)
+    check(plain is not None and 'EXYNOS990' in plain.group(1).split(),
+          'MakeInc.def builds EXYNOS990 as arm64, not arm64e')
     bc = read(os.path.join(tree, 'pexpert', 'pexpert', 'arm64', 'board_config.h'))
     check(re.search(r'#ifdef ARM64_BOARD_CONFIG_EXYNOS990\s*\n#include <pexpert/arm64/EXYNOS990.h>', bc) is not None,
           'board_config.h includes EXYNOS990.h for the 990 config')

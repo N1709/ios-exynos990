@@ -173,3 +173,27 @@ _(none yet — milestone E1 has not been flashed)_
 After that: E3 (UFS: the FMP descriptor path if `prdt_stride` is 128, and
 the read of USERDATA), E4 (DECON), E5 (touch), E6 (iOS root in USERDATA
 with the NativeUfs driver).
+
+## First CI build (run 39706196610, 2026-10-22)
+
+The `xnu` workflow ran on `macos-14` with `MACHINE_CONFIG=EXYNOS990`; it is
+the first real build of the port.  Patches `0125`–`0129` applied, the
+`dtrace` tools and `libsyscall` built, then the kernel stopped at once:
+
+```
+makedefs/MakeInc.kernel:22: *** Unsupported CURRENT_MACHINE_CONFIG EXYNOS990.  Stop.
+make[1]: *** [build_setup_bootstrap_DEVELOPMENT^ARM64^EXYNOS990] Error 2
+```
+
+`MakeInc.kernel` validates the machine config against
+`SUPPORTED_ARM64_MACHINE_CONFIGS` in `makedefs/MakeInc.def`, and `0125` never
+added `EXYNOS990` to that list (`MakeInc.def` had only the
+`MACHINE_FLAGS_ARM64_EXYNOS990` line).  Patch `0130` adds it and also adds
+the board to the "plain arm64, not arm64e" filter a few lines below, so the
+kernel is built without Apple's pointer authentication, which the loader
+does not set up.  The build failed before the compile step, so the
+`xnu-kernel` artifact of that run holds no kernel and no compile errors:
+the next run tells whether the sources themselves build.
+
+`tools/check-exynos990-config.py` now checks both lists, and it fails on a
+tree without `0130` — this class of error is caught offline from now on.

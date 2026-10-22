@@ -32,7 +32,7 @@ image v2, so the port has its own loader in `shim/exynos990/`.
 | Item | What it is | State | Tested |
 | --- | --- | --- | --- |
 | E1 | Loader: arm64 Image for S-Boot, UART, UFS probe, payload copy, jump to XNU | done | build + self test, **not on a phone** |
-| E2 | XNU board config, patches `0125`–`0129` | done | static checker + `git apply`, **not compiled** |
+| E2 | XNU board config, patches `0125`–`0130` | done | static checker + `git apply`; first CI build stopped on a missing `SUPPORTED_*` entry (fixed in `0130`), **not compiled yet** |
 | E3 | UFS: protector/descriptor type, plain 16-byte and FMP 128-byte PRDT, GPT | 90% | code, not on a phone |
 | E4 | Display: DECON probe, `boot_args.Video` handoff, framebuffer console | 85% | code, not on a phone |
 | E5 | Touch: bus/IRQ wiring per model, Y79A command set | 40% | wiring only |
@@ -66,7 +66,7 @@ with its source file and line in `docs/exynos990-hardware.md`.
 | `tools/exynos990-selftest.py` | self test of the chain, no phone needed (7 models) |
 | `tools/check-exynos990-config.py` | static check of the XNU board configuration |
 | `tools/exynos990-collect.sh` | reads the board facts off the phone (TWRP) |
-| `xnu/patches/` | XNU patches, applied in order (`0125`–`0129`) |
+| `xnu/patches/` | XNU patches, applied in order (`0125`–`0130`) |
 | `docs/exynos990-hardware.md` | hardware facts, each with its Android kernel source |
 | `docs/exynos990-flash.md` | flashing procedure and the UART log |
 | `EXYNOS990_PROGRESS.md` | port log: milestones, evidence, open questions |
