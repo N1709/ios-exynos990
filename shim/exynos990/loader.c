@@ -23,6 +23,7 @@
 #include "board.h"
 #include "console.h"
 #include "ufs_probe.h"
+#include "decon_probe.h"
 
 /* ---- payload container (tools/mkpayload.py, "SWEETXNU" v1) ---- */
 struct payload_seg {
@@ -254,10 +255,37 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 	 * it is zeroed right afterwards. */
 	ufs_probe(kv, out, UFS_DMA_BASE);
 
+	/* The bootloader programs the display before it hands over (the
+	 * Android DPU driver calls this "LCD_ON_UBOOT"), so the DECON
+	 * registers describe the panel of this model.  Read them: the window
+	 * geometry, the image size and the address of the buffer the
+	 * bootloader draws into.  Read-only. */
+	struct decon_fb fb;
+	decon_probe(kv, out, &fb);
+
 	/* sboot leaves the previous OS's data in RAM (Android, or a previous
-	 * loader run); iBoot hands XNU zeroed memory, so zero it here. */
+	 * loader run); iBoot hands XNU zeroed memory, so zero it here - but
+	 * keep the buffer the display is scanning out, if it lives inside
+	 * the window: zeroing it would blank the panel. */
 	out("zeroing XNU RAM...\n");
-	zero(p->phys_base, p->mem_size);
+	uintptr_t fb_lo = 0, fb_hi = 0;
+	if (fb.found && fb.stride && fb.height) {
+		fb_lo = fb.phys;
+		fb_hi = fb_lo + (uint64_t)fb.stride * fb.height;
+	}
+	if (fb_hi > fb_lo && fb_lo < mem_end && fb_hi > p->phys_base) {
+		uintptr_t lo = fb_lo < p->phys_base ? p->phys_base : fb_lo;
+		uintptr_t hi = fb_hi > mem_end ? mem_end : fb_hi;
+		zero(p->phys_base, lo - p->phys_base);
+		zero(hi, mem_end - hi);
+		out("kept the display buffer ");
+		hex(lo);
+		out(" ");
+		hex(hi - lo);
+		out("\n");
+	} else {
+		zero(p->phys_base, p->mem_size);
+	}
 	out("zeroed\n");
 
 	for (uint64_t i = 0; i < nsegs; i++) {
@@ -298,6 +326,26 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 	for (int i = 0; i < BOOT_LINE_LENGTH; i++)
 		ba->CommandLine[i] = p->cmdline[i];
 	ba->memSizeActual = p->mem_size;
+
+	/* The display buffer the bootloader left, handed to XNU the way iBoot
+	 * does it: PE_current_console() turns boot_args.Video into the console
+	 * framebuffer.  Only the 32-bit XRGB/ARGB formats can be used as a
+	 * pixel buffer by the console (the data path format the bootloader
+	 * chose is printed by the probe as "format"). */
+	if (fb.found && fb.width && fb.height && fb.stride) {
+		ba->Video.v_baseAddr = fb.phys;
+		ba->Video.v_display = 1;	        /* graphics */
+		ba->Video.v_rowBytes = fb.stride;
+		ba->Video.v_width = fb.width;
+		ba->Video.v_height = fb.height;
+		ba->Video.v_depth = 32 | (1 << 16);    /* depth 32, scale 1x */
+		kv("fb", fb.phys);
+		kv("fb_width", fb.width);
+		kv("fb_height", fb.height);
+		kv("fb_stride", fb.stride);
+	} else {
+		out("no display buffer found: XNU boots without a framebuffer\n");
+	}
 	clean(adt_pa, ba_pa + PAGE_SIZE);
 
 	uintptr_t entry_pa = p->phys_base + (p->entry_va - p->virt_base);

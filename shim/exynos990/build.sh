@@ -19,8 +19,9 @@ $CC $CFLAGS -c start.S -o out/start.o
 $CC $CFLAGS -c loader.c -o out/loader.o
 $CC $CFLAGS -c console.c -o out/console.o
 $CC $CFLAGS -c ufs_probe.c -o out/ufs_probe.o
+$CC $CFLAGS -c decon_probe.c -o out/decon_probe.o
 $CC $CFLAGS -c ../fdt.c -o out/fdt.o
-objs="out/loader.o out/console.o out/ufs_probe.o out/fdt.o"
+objs="out/loader.o out/console.o out/ufs_probe.o out/decon_probe.o out/fdt.o"
 # S-Boot runs the image wherever it puts it, with no relocation pass: an
 # absolute relocation would need a fixup that nobody performs. start.S is
 # left out, it may hold the absolute image size of the arm64 Image header.
