@@ -68,6 +68,7 @@ with its source file and line in `docs/exynos990-hardware.md`.
 | `tools/exynos990-selftest.py` | self test of the chain, no phone needed (7 models) |
 | `tools/check-exynos990-config.py` | static check of the XNU board configuration |
 | `tools/exynos990-collect.sh` | reads the board facts off the phone (TWRP) |
+| `tools/exynos990-readlog.sh` | dumps the RAM log the instant TWRP's adbd appears |
 | `xnu/patches/` | XNU patches, applied in order (`0125`–`0136`) |
 | `docs/exynos990-hardware.md` | hardware facts, each with its Android kernel source |
 | `docs/exynos990-flash.md` | flashing procedure and the UART log |
@@ -107,11 +108,20 @@ followed by a 16 KiB pmsg zone, so the ring is at **`0xeb30c000`**. The loader
 and XNU both append to it in `persistent_ram` format (sig `DBGC`, start, size,
 data), and TWRP exposes it as `/sys/fs/pstore/pmsg-ramoops-0`:
 
+TWRP writes its own `recoverycharge_status` line into that same ring every
+second, so it erases a boot's log in about three minutes. Read it the moment
+adbd appears, not after TWRP is idle:
+
 ```bash
-# after a failed boot, boot TWRP and read the log
-adb shell 'cat /sys/fs/pstore/pmsg-ramoops-0' | strings | tail -80
-# or look for the kernel's own part
-adb shell 'cat /sys/fs/pstore/pmsg-ramoops-0' | grep -a -A40 EXYNOS990
+# start this first (it blocks), then boot TWRP with Vol Up + Power
+tools/exynos990-readlog.sh
+```
+
+or by hand, immediately after adbd comes up:
+
+```bash
+adb exec-out 'cat /sys/fs/pstore/pmsg-ramoops-0' > /tmp/pmsg.txt
+tr -d '\000' < /tmp/pmsg.txt | grep -a -A40 EXYNOS990
 ```
 
 What the log already said in the first attempt (before the sink existed) and
