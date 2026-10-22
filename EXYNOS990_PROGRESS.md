@@ -401,3 +401,30 @@ that stops at `JUMP TO XNU` is a PE/pmap failure before `serial_init`; a
 `--- XNU console ---` line means XNU started and the following text is the
 real panic; no `EXYNOS990` at all means the reset happens before the loader
 runs (S-Boot) and only a UART will help.
+
+## Root cause of the logo loop: the boot image header version
+
+`sboot.bin` (BL_G988BXXUBDUI5, decompressed to 4 MiB) was disassembled and
+it explains every failed boot so far.  The loader is never entered:
+
+- `0x1cd9f8  "%s: header_version %d is not supported."`
+- `0x1cd840  "This boot image's header version(%d) is not supported."`
+- `0x0f3034  ldr w0, [0x8b000000, #40]` (header_version of the loaded image)
+  `0x0f3038  cmp w0, #2` / `b.eq` the v2 path, otherwise the message above
+  and a call to the boot-failure reset routine (reason 0xc), which is why
+  `reset_reason` shows a cold PMIC power cycle instead of a watchdog.
+
+Images built until now had `header_version = 0`, so sboot dropped them
+before the jump.  That also explains the missing green band and the fact
+that the start.S pstore record (written before the first C instruction)
+never appeared: nothing of ours ran.
+
+sboot also always patches a device tree before the jump ("configure_dtb",
+libfdt, "fdt_dtb is not set yet"), so a v2 image needs a real dtb blob.
+
+`tools/mkboot_exynos990.py` now writes header v2 (header_size 1660, page
+2048, tags_addr 0x10000100, os_version 0x200001a5) and a dtb slot, and
+`tools/exynos990-make-boot.sh` feeds it `firmware/z3s-dtb.bin`, the Samsung
+dtb table (340,940 bytes) taken from the boot image of the working
+ArtisanROM build for the same phone.  The new header is field-for-field
+identical to that working image apart from the kernel and ramdisk sizes.

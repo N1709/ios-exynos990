@@ -58,8 +58,14 @@ bash shim/exynos990/build.sh
 cp shim/exynos990/out/Image "$outdir/loader-$model.img"
 
 echo "== 4. boot image"
+# Header v2 with the phone's own Samsung DTB table: sboot reads header_version
+# at offset 40, only accepts 2, and refuses to jump without an FDT to patch
+# ("fdt_dtb is not set yet" in sboot.bin).  page size 2048 and tags_addr are
+# what the stock z3s image uses.
 python3 tools/mkboot_exynos990.py --kernel "$outdir/loader-$model.img" \
-	--ramdisk "$outdir/$model.payload" --out "$outdir/boot-$model.img"
+	--ramdisk "$outdir/$model.payload" --out "$outdir/boot-$model.img" \
+	--page-size 2048 --tags-addr 0x10000100 \
+	--dtb firmware/z3s-dtb.bin --dtb-addr 0x10000000
 
 echo
 echo "boot image : $outdir/boot-$model.img"

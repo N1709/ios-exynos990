@@ -39,9 +39,13 @@ boot_img_hdr_v1, packed, 1648 bytes in the first page):
   0x664  u64    recovery_dtbo_offset
   0x66c  u32    header_size
 
-header_version stays 0, the legacy header sboot expects; sboot therefore
-ignores the recovery_* fields, and header_size only documents how many bytes
-this script wrote.  The id field follows the old AOSP mkbootimg scheme: a
+header_version is 2 and the DTB goes in the v2 dtb slot.  This is not
+cosmetic: sboot reads header_version at offset 40 and only accepts 2 -
+"<name>: header_version %d is not supported." exists in sboot.bin, and the
+code compares it with 2 before every jump to the kernel.  A v0 image is
+dropped and the AP is reset, which is exactly the logo loop this port
+started with.  The page size and tags address match the stock image of the
+phone (2048 and 0x10000100).  The id field follows the old AOSP mkbootimg scheme: a
 SHA-1 over the kernel bytes, the kernel size (little endian u32) and the NUL
 terminated product name.  Nothing on the device verifies it.
 
@@ -55,7 +59,7 @@ import struct
 from pathlib import Path
 
 BOOT_MAGIC = b"ANDROID!"
-HEADER_SIZE = 1648			# AOSP boot_img_hdr_v1, packed
+HEADER_SIZE = 1660			# AOSP boot_img_hdr_v2, packed
 NAME_SIZE = 16
 CMDLINE_SIZE = 512
 EXTRA_CMDLINE_SIZE = 1024
@@ -70,12 +74,16 @@ OFF_EXTRA_CMDLINE = 0x260
 OFF_RECOVERY_DTBO_SIZE = 0x660
 OFF_RECOVERY_DTBO_OFFSET = 0x664
 OFF_HEADER_SIZE = 0x66c
+OFF_DTB_SIZE = 0x670
+OFF_DTB_ADDR = 0x674
 
-HEADER_VERSION = 0			# the legacy header Samsung's sboot expects
+HEADER_VERSION = 2			# sboot rejects anything else
 DEFAULT_BASE = 0x10000000
 DEFAULT_KERNEL_OFFSET = 0x8000
 DEFAULT_RAMDISK_OFFSET = 0x1000000
-DEFAULT_PAGE_SIZE = 4096
+DEFAULT_PAGE_SIZE = 2048		# what the stock z3s boot image uses
+DEFAULT_TAGS_ADDR = 0x10000100
+DEFAULT_DTB_ADDR = 0x10000000
 DEFAULT_DTB_OFFSET = 0x2000000		# unused by the loader, only recorded
 
 
@@ -113,7 +121,8 @@ def image_id(kernel, name):
 
 
 def build_image(kernel, ramdisk, dtb, name, cmdline, base, kernel_offset,
-                ramdisk_offset, page):
+                ramdisk_offset, page, tags_addr=DEFAULT_TAGS_ADDR,
+                dtb_addr=DEFAULT_DTB_ADDR):
     """Return (boot image bytes, header info) for the given parts."""
     if not kernel or not ramdisk:
         raise ValueError('kernel and ramdisk must not be empty')
@@ -126,8 +135,10 @@ def build_image(kernel, ramdisk, dtb, name, cmdline, base, kernel_offset,
 
     kernel_addr = base + kernel_offset
     ramdisk_addr = base + ramdisk_offset
-    second_size = len(dtb) if dtb else 0
-    second_addr = base + DEFAULT_DTB_OFFSET if dtb else 0
+    second_size = 0
+    second_addr = 0
+    dtb_size = len(dtb)
+    dtb_addr_field = dtb_addr if dtb else 0
 
     hdr = bytearray(HEADER_SIZE)
     struct.pack_into('<8s', hdr, OFF_MAGIC, BOOT_MAGIC)
@@ -135,10 +146,10 @@ def build_image(kernel, ramdisk, dtb, name, cmdline, base, kernel_offset,
                      len(kernel), kernel_addr,
                      len(ramdisk), ramdisk_addr,
                      second_size, second_addr,
-                     0,				# tags_addr: Exynos has no tags
+                     tags_addr,
                      page,
                      HEADER_VERSION,
-                     0)				# os_version: an Android field, unused here
+                     0x200001a5)		# os_version, as in the stock image
     hdr[OFF_NAME:OFF_NAME + NAME_SIZE] = name_field
     put_bytes(hdr, OFF_CMDLINE, main_cmd)
     put_bytes(hdr, OFF_ID, image_id(kernel, name.encode() + b'\0'))
@@ -146,16 +157,22 @@ def build_image(kernel, ramdisk, dtb, name, cmdline, base, kernel_offset,
     struct.pack_into('<I', hdr, OFF_RECOVERY_DTBO_SIZE, 0)
     struct.pack_into('<Q', hdr, OFF_RECOVERY_DTBO_OFFSET, 0)
     struct.pack_into('<I', hdr, OFF_HEADER_SIZE, HEADER_SIZE)
+    struct.pack_into('<I', hdr, OFF_DTB_SIZE, dtb_size)
+    struct.pack_into('<Q', hdr, OFF_DTB_ADDR, dtb_addr_field)
 
     image = bytearray(hdr)
     image += b'\0' * (page - len(image))
     for part in (kernel, ramdisk, dtb):
+        if not part:
+            continue
         image += part
         image += b'\0' * (align_up(len(part), page) - len(part))
 
     info = dict(kernel_size=len(kernel), kernel_addr=kernel_addr,
                 ramdisk_size=len(ramdisk), ramdisk_addr=ramdisk_addr,
                 second_size=second_size, second_addr=second_addr,
+                dtb_size=dtb_size, dtb_addr=dtb_addr_field,
+                tags_addr=tags_addr,
                 page_size=page, name=name, cmdline=cmdline,
                 id=bytes(hdr[OFF_ID:OFF_ID + ID_SIZE]))
     return bytes(image), info
@@ -176,11 +193,13 @@ def parse_header(blob):
         cmdline=blob[OFF_CMDLINE:OFF_CMDLINE + CMDLINE_SIZE].split(b'\0')[0].decode(),
         extra_cmdline=blob[OFF_EXTRA_CMDLINE:OFF_EXTRA_CMDLINE + EXTRA_CMDLINE_SIZE].split(b'\0')[0].decode(),
         id=blob[OFF_ID:OFF_ID + ID_SIZE],
-        header_size=struct.unpack_from('<I', blob, OFF_HEADER_SIZE)[0])
+        header_size=struct.unpack_from('<I', blob, OFF_HEADER_SIZE)[0],
+        dtb_size=struct.unpack_from('<I', blob, OFF_DTB_SIZE)[0],
+        dtb_addr=struct.unpack_from('<Q', blob, OFF_DTB_ADDR)[0])
 
 
 def unpack_image(blob):
-    """Split a boot image back into (header info, kernel, ramdisk, second)."""
+    """Split a boot image back into (header info, kernel, ramdisk, dtb)."""
     info = parse_header(blob)
     page = info['page_size']
     off = page
@@ -188,19 +207,19 @@ def unpack_image(blob):
     off += align_up(info['kernel_size'], page)
     ramdisk = blob[off:off + info['ramdisk_size']]
     off += align_up(info['ramdisk_size'], page)
-    second = blob[off:off + info['second_size']]
-    return info, kernel, ramdisk, second
+    dtb = blob[off:off + info['dtb_size']]
+    return info, kernel, ramdisk, dtb
 
 
 def self_check(image, kernel, ramdisk, dtb):
     """Unpack the image just written and compare it with the parts."""
-    info, got_kernel, got_ramdisk, got_second = unpack_image(image)
+    info, got_kernel, got_ramdisk, got_dtb = unpack_image(image)
     if got_kernel != kernel:
         raise SystemExit('self check failed: kernel does not round trip')
     if got_ramdisk != ramdisk:
         raise SystemExit('self check failed: ramdisk does not round trip')
-    if got_second != (dtb or b''):
-        raise SystemExit('self check failed: second (dtb) does not round trip')
+    if got_dtb != (dtb or b''):
+        raise SystemExit('self check failed: dtb does not round trip')
     if info['header_size'] != HEADER_SIZE or info['header_version'] != HEADER_VERSION:
         raise SystemExit('self check failed: unexpected header version or size')
     return info
@@ -223,7 +242,11 @@ def main():
     ap.add_argument('--page-size', type=auto_int, default=DEFAULT_PAGE_SIZE,
                     help=f'flash page size (default {DEFAULT_PAGE_SIZE})')
     ap.add_argument('--dtb', type=Path,
-                    help='optional DTB appended after the ramdisk (recorded as "second")')
+                    help='DTB (Samsung dtb table) appended after the ramdisk, v2 slot')
+    ap.add_argument('--dtb-addr', type=auto_int, default=DEFAULT_DTB_ADDR,
+                    help=f'dtb_addr header field (default {DEFAULT_DTB_ADDR:#x})')
+    ap.add_argument('--tags-addr', type=auto_int, default=DEFAULT_TAGS_ADDR,
+                    help=f'tags_addr header field (default {DEFAULT_TAGS_ADDR:#x})')
     ap.add_argument('--cmdline', default='',
                     help='kernel command line stored in the header')
     ap.add_argument('--name', default='exynos990',
@@ -237,7 +260,7 @@ def main():
     try:
         image, info = build_image(kernel, ramdisk, dtb, args.name, args.cmdline,
                                   args.base, args.kernel_offset, args.ramdisk_offset,
-                                  args.page_size)
+                                  args.page_size, args.tags_addr, args.dtb_addr)
     except ValueError as exc:
         raise SystemExit(f'error: {exc}')
     self_check(image, kernel, ramdisk, dtb)
@@ -247,8 +270,8 @@ def main():
     print(f'  header    : version {HEADER_VERSION}, {HEADER_SIZE} bytes in a {args.page_size}-byte page')
     print(f'  kernel    : {info["kernel_size"]} bytes @ {info["kernel_addr"]:#x}')
     print(f'  ramdisk   : {info["ramdisk_size"]} bytes @ {info["ramdisk_addr"]:#x}')
-    if info['second_size']:
-        print(f'  dtb       : {info["second_size"]} bytes @ {info["second_addr"]:#x} (second)')
+    if info['dtb_size']:
+        print(f'  dtb       : {info["dtb_size"]} bytes @ {info["dtb_addr"]:#x}')
     print(f'  name      : {info["name"]}')
     print(f'  cmdline   : {info["cmdline"] or "(empty)"}')
     print(f'  id        : {info["id"].hex()}')
