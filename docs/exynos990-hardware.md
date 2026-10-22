@@ -1275,3 +1275,27 @@ The Android side selects the type through `exynos_smc(SMC_CMD_FMP_SECURITY,
 `bsd/dev/sweet_ufs.c` therefore reads `DESCTYPE` and uses a 128-byte stride
 when it is 3 (patch `0128`), capping one request at
 `PRDT_AREA / stride * 4 KiB` (128 KiB with the FMP table, 1 MiB plain).
+
+## Touch (sec_ts on hsi2c_15)
+
+| Fact | Value | Source |
+|---|---|---|
+| Controller | `hsi2c_15` at `0x108D0000` | `exynos/exynos9830-usi.dtsi:846` |
+| Touch node | `touchscreen@48`, `compatible = "sec,sec_ts"` | `samsung/exynos9830-hubble_input_common.dtsi:91-106` |
+| I2C address | `0x48` | same |
+| Interrupt GPIO | `gpa1` pin 0, `sec,irq_type = <8200>` (falling edge) | same |
+| GPIO block | pinctrl_0 at `0x15850000`; gpa1 bank at `0x020`, DAT at `+0x04` | `exynos/exynos9830.dts:1211`, `drivers/pinctrl/samsung/pinctrl-exynos-arm64.c` (EXYNOS9 bank table) |
+| Firmware | `tsp_sec/y79a_x1.bin` (x1s), `y79a_z3.bin` (z3s), `y771_c1.bin` (c1s) | `samsung/exynos9830-{hubblex1,hubblez3}_input_common.dtsi`, `samsung/exynos9830-c1_input_common.dtsi` |
+
+Model coverage of that one node: `x1s`/`y2s`/`z3s` include
+`exynos9830-hubble_input_common.dtsi`; `c1s`/`c2s`/`win2` include
+`exynos9830-canvas_input_common.dtsi`, whose `tsp_lsi: touchscreen@48` is the
+same `sec,sec_ts` node on the same bus.  The **Galaxy S20 FE (`r8s`) is the
+exception**: `exynos990-r8s_input_common.dtsi:101-144` puts a
+`zinitix,zt_ts_device` at `0x20` and an `stm,fts_touch` at `0x49` on
+`hsi2c_15`, a different protocol.
+
+The XNU side (`bsd/dev/samsung_touch.c`, patch `0129`) now takes the bus,
+address and GPIO block from the 990 board header; the register protocol is
+still the one of the S8's S6SY761, which is why `SWEET_TOUCH_DEFAULT` stays 0
+until the Y79A protocol is ported.

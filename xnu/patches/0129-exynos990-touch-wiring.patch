@@ -1,0 +1,57 @@
+diff --git a/bsd/dev/samsung_touch.c b/bsd/dev/samsung_touch.c
+index c6b2d97..08798a3 100644
+--- a/bsd/dev/samsung_touch.c
++++ b/bsd/dev/samsung_touch.c
+@@ -630,11 +630,28 @@ a5touch_start_early(vm_offset_t nfc, vm_offset_t alive)
+  * Battery: MAX77865 on hsi2c_32 (USI13 second HSI2C, 0x10970000), fuel
+  * gauge 0x36 and charger 0x69 (Samsung max77865_fuelgauge.c/_charger.c).
+  */
++#if defined(EXYNOS990)
++/*
++ * Exynos 990: every model but the Galaxy S20 FE uses the Samsung sec_ts
++ * ("Y79A") at 0x48 on hsi2c_15 (0x108D0000, exynos9830-usi.dtsi:846); its
++ * interrupt is gpa1[0] in pinctrl_0 (0x15850000, exynos9830.dts:1211) and
++ * gpa1 sits at bank offset 0x020 with DAT at +0x04
++ * (drivers/pinctrl/samsung/pinctrl-exynos-arm64.c, the EXYNOS9 bank table).
++ * The S20 FE (r8s) uses a zinitix at 0x20 or an STM at 0x49 on the same
++ * bus instead, which this protocol does not cover.
++ */
++#define S8TS_HSI2C_PA           SWEET_TOUCH_HSI2C_PA
++#define S8BAT_HSI2C_PA          0x10970000u
++#define S8TS_ALIVE_PA           SWEET_TOUCH_GPIO_BASE
++#define S8TS_GPA1_DAT           SWEET_TOUCH_GPIO_DAT
++#define S8TS_ADDR               SWEET_TOUCH_ADDR
++#else
+ #define S8TS_HSI2C_PA           0x108e0000u
+ #define S8BAT_HSI2C_PA          0x10970000u
+ #define S8TS_ALIVE_PA           0x164b0000u
+ #define S8TS_GPA1_DAT           0x44u
+ #define S8TS_ADDR               0x48u
++#endif
+ #define S8BAT_FG                0x36u
+ #define S8BAT_CHG               0x69u
+ #define S8TS_FINGERS            10
+diff --git a/pexpert/pexpert/arm64/EXYNOS990.h b/pexpert/pexpert/arm64/EXYNOS990.h
+index caa2059..ddb9f02 100644
+--- a/pexpert/pexpert/arm64/EXYNOS990.h
++++ b/pexpert/pexpert/arm64/EXYNOS990.h
+@@ -53,7 +53,18 @@
+ #define SWEET_ENTRY_MARKER_PHYS       0           /* no log RAM known yet */
+ #define SWEET_BOOT_MPIDR              0           /* TBC: the loader prints it */
+ #define SWEET_KEYS_DEFAULT            0           /* per-model GPIO keys unknown */
+-#define SWEET_TOUCH_DEFAULT           0           /* no 990 touch controller yet */
++/* Touch: the Samsung sec_ts ("Y79A") of the S20/Note 20 family sits at 0x48
++ * on hsi2c_15 (0x108D0000, exynos9830-usi.dtsi:846) with its interrupt on
++ * gpa1[0] (pinctrl_0 0x15850000, gpa1 bank offset 0x020, DAT +0x04).
++ * Sources: arch/arm64/boot/dts/samsung/exynos9830-hubble_input_common.dtsi:91-106
++ * (compatible "sec,sec_ts", reg 0x48, sec,irq_gpio = <&gpa1 0>) and the
++ * canvas/c1/c2 input trees.  The S20 FE (r8s) uses a zinitix at 0x20 or an
++ * STM at 0x49 instead. */
++#define SWEET_TOUCH_HSI2C_PA          0x108D0000u
++#define SWEET_TOUCH_ADDR              0x48u
++#define SWEET_TOUCH_GPIO_BASE         0x15850000u
++#define SWEET_TOUCH_GPIO_DAT          0x24u       /* bank 0x020 + DAT 0x04 */
++#define SWEET_TOUCH_DEFAULT           0           /* protocol not ported yet */
+ #define SWEET_KLOG_PHYS               0           /* TBC: TWRP pmsg address */
+ #define SWEET_KLOG_SIZE               0x80000
+ #define SWEET_USE_PHYS_TIMER          1
