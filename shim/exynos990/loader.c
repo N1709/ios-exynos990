@@ -198,9 +198,20 @@ static void mark(char c)
 /* ---- tiny console helpers ---- */
 static void out(const char *s)
 {
+	int nl = 0;
+
 	con_puts(s);
-	while (*s)
+	while (*s) {
+		if (*s == '\n')
+			nl = 1;
 		klog_putc(*s++);
+	}
+	/* Mirror every completed line into the ramoops dump zone: when the
+	 * loader hangs on a clock-gated block the last line it managed to
+	 * print is the only evidence, and it has to be readable after the
+	 * fact. */
+	if (nl)
+		klog_dump();
 }
 
 static void hex(uint64_t v)
