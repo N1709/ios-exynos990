@@ -34,12 +34,12 @@ env:
 
 jobs:
   build:
-    # macos-13 (Intel), not macos-14 (arm64): the arm64 macOS pool queues this
-    # job for tens of minutes and the kernel is cross-compiled for arm64
-    # anyway.  Xcode 15.x is required on either image: its iig matches the
-    # xnu-8796 IORPC ABI (Xcode 16 emits IORPC.kernelContent, which this xnu
-    # lacks).
-    runs-on: macos-13
+    # Keep macos-14: the sibling ios-sweet workflow gets a runner there
+    # within seconds, while macos-13 no longer exists and a job targeting it
+    # stays queued forever ("Waiting for a runner").  Xcode 15.x is required:
+    # its iig matches the xnu-8796 IORPC ABI (Xcode 16 emits
+    # IORPC.kernelContent, which this xnu lacks).
+    runs-on: macos-14
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
