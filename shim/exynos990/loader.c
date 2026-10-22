@@ -225,16 +225,6 @@ static void zero(uintptr_t dst, uint64_t n)
 		*(volatile uint8_t *)dst = 0;
 }
 
-static void clean(uintptr_t start, uintptr_t end)
-{
-	uint64_t ctr;
-	__asm__ volatile("mrs %0, ctr_el0" : "=r"(ctr));
-	uintptr_t line = 4UL << ((ctr >> 16) & 0xf);
-
-	for (uintptr_t p = start & ~(line - 1); p < end; p += line)
-		__asm__ volatile("dc civac, %0" : : "r"(p) : "memory");
-	__asm__ volatile("dsb sy" ::: "memory");
-}
 
 /* ---- watchdog ----
  * sboot arms Samsung's watchdog before it hands over (watchdog_cl0@10050000
@@ -417,6 +407,9 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 	 * bootloader draws into.  Read-only. */
 	struct decon_fb fb;
 	decon_probe(kv, out, &fb);
+	/* First visible sign of life, milliseconds after entry: if this band
+	 * never appears the loader did not execute at all. */
+	paint_band(&fb, 0xff00ff00u);
 
 	/* sboot leaves the previous OS's data in RAM (Android, or a previous
 	 * loader run); iBoot hands XNU zeroed memory, so zero it here - but
@@ -428,18 +421,29 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 		fb_lo = fb.phys;
 		fb_hi = fb_lo + (uint64_t)fb.stride * fb.height;
 	}
-	if (fb_hi > fb_lo && fb_lo < mem_end && fb_hi > p->phys_base) {
+	/* iBoot zeroes all of RAM.  Doing that here is not free: with the MMU
+	 * off every 8-byte store is a separate Device access, and 512 MiB of
+	 * them takes long enough for the bootloader's own reset timer to fire
+	 * (the phone loops with reset_reason RPON).  The VM zeroes pages when
+	 * it hands them out, so only the area XNU touches before its VM runs
+	 * has to start clean: 64 MiB is plenty and takes a fraction of a
+	 * second. */
+	uint64_t zero_len = p->mem_size;
+	if (zero_len > 64u * 1024u * 1024u)
+		zero_len = 64u * 1024u * 1024u;
+	uintptr_t zero_end = p->phys_base + zero_len;
+	if (fb_hi > fb_lo && fb_lo < zero_end && fb_hi > p->phys_base) {
 		uintptr_t lo = fb_lo < p->phys_base ? p->phys_base : fb_lo;
-		uintptr_t hi = fb_hi > mem_end ? mem_end : fb_hi;
+		uintptr_t hi = fb_hi > zero_end ? zero_end : fb_hi;
 		zero(p->phys_base, lo - p->phys_base);
-		zero(hi, mem_end - hi);
+		zero(hi, zero_end - hi);
 		out("kept the display buffer ");
 		hex(lo);
 		out(" ");
 		hex(hi - lo);
 		out("\n");
 	} else {
-		zero(p->phys_base, p->mem_size);
+		zero(p->phys_base, zero_len);
 	}
 	out("zeroed\n");
 
@@ -452,7 +456,6 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 		uintptr_t dst = p->phys_base + (s->vmaddr - p->virt_base);
 		copy(dst, rd_start + s->file_off, s->file_size);
 		zero(dst + s->file_size, s->vmsize - s->file_size);
-		clean(dst, dst + s->vmsize);
 		out("seg ");
 		hex(i);
 		out(" -> ");
@@ -501,8 +504,7 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 	} else {
 		out("no display buffer found: XNU boots without a framebuffer\n");
 	}
-	paint_band(&fb, 0xff00ff00u);	/* green: loader reached the handoff */
-	clean(adt_pa, ba_pa + PAGE_SIZE);
+	__asm__ volatile("dsb sy" ::: "memory");
 
 	uintptr_t entry_pa = p->phys_base + (p->entry_va - p->virt_base);
 	if (entry_pa >= kernel_end)
@@ -520,7 +522,6 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 	out("\n\nJUMP TO XNU\n");
 	klog_dump();
 	paint_band(&fb, 0xff0000ffu);	/* blue: about to branch into XNU */
-	clean(p->phys_base, mem_end);
 	__asm__ volatile("dsb sy" ::: "memory");
 	return entry_pa;
 }
