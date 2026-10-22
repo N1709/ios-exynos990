@@ -151,6 +151,21 @@ _(none yet — milestone E1 has not been flashed)_
 - **E6 — iOS root.** Flash the iPhone X root into USERDATA (like the S8
   port did) and boot with `rd=md0` once storage works.
 
+**Why XNU was silent (2026-10-22, fixed in the loader).** `boot_args` was
+anchored at the window base (`physBase 0x890000000`, `virtBase
+0xfffffe0006000000`), but the Mach header of this kernel lives at
+`0xfffffe0007004000` — `0x1004000` higher. `osfmk/arm64/start.s:551-610`
+recomputes the slide as `x18 = _mh_execute_header - boot_args.physBase` and
+shifts both bases by it before building the bootstrap tables, so the KVA map
+ended up `0x1004000` off the link addresses; the `ret` to `arm_init` after
+the MMU came up fetched from `0x8a42d000` instead of `0x891431000`, and the
+CPU spun in `LowExceptionVectorBase` (a page of `b .`) with no console —
+exactly the silence that was observed, and it explains why not even
+`klog_init` ran. The loader now anchors `virtBase`/`physBase`/`memSize` at
+the segment with file offset 0, the way iBoot does. Copy destinations,
+`deviceTreeP` and `entry_pa` do not move, because only the common offset
+`virtBase - physBase` matters for them.
+
 ## Next action (scope: E3–E5, E6 deferred)
 
 E1 is done on the phone and E2 is one boot away from being either proven or

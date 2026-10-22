@@ -482,7 +482,32 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 	 * table before they were read, and this is where the boot stopped
 	 * ("zeroing" was the last line). */
 	mark('9');
-	mark('9');
+
+	/* iBoot hands XNU the address of the Mach header as physBase and the
+	 * link address of that same header as virtBase.  start.s recomputes the
+	 * slide from them:
+	 *
+	 *   x18 = _mh_execute_header - boot_args.physBase
+	 *   virtBase += x18;  physBase += x18;  memSize -= x18;
+	 *
+	 * and only then builds the bootstrap KVA table (osfmk/arm64/start.s:
+	 * 551-610).  Our payload header carries the base of the window, which
+	 * sits 0x1004000 below __TEXT in this kernel, so x18 was 0x1004000: the
+	 * KVA map was shifted by that much against the link addresses, the
+	 * MMU came up, and the return to arm_init fetched from the wrong
+	 * physical page (0x8a42d000 instead of 0x891431000).  The CPU then spun
+	 * in LowExceptionVectorBase (a page of `b .`) with no console at all -
+	 * exactly the silence on the phone.  Anchor both bases at the segment
+	 * that carries the Mach header (file offset 0), the way iBoot does. */
+	uint64_t kva0 = p->virt_base, kpa0 = p->phys_base;
+	for (uint64_t i = 0; i < nsegs; i++) {
+		const volatile struct payload_seg *s = &p->segs[i];
+		if (s->file_off == 0 && s->file_size) {
+			kva0 = s->vmaddr;
+			kpa0 = p->phys_base + (s->vmaddr - p->virt_base);
+			break;
+		}
+	}
 
 	for (uint64_t i = 0; i < nsegs; i++) {
 		const volatile struct payload_seg *s = &p->segs[i];
@@ -513,15 +538,15 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 	volatile struct boot_args *ba = (volatile struct boot_args *)ba_pa;
 	ba->Revision = 2;
 	ba->Version = 2;
-	ba->virtBase = p->virt_base;
-	ba->physBase = p->phys_base;
-	ba->memSize = p->mem_size;
+	ba->virtBase = kva0;
+	ba->physBase = kpa0;
+	ba->memSize = (uint32_t)(mem_end - kpa0);
 	ba->topOfKernelData = ba_pa + PAGE_SIZE;
-	ba->deviceTreeP = p->virt_base + (adt_pa - p->phys_base);
+	ba->deviceTreeP = kva0 + (adt_pa - kpa0);
 	ba->deviceTreeLength = (uint32_t)p->adt_size;
 	for (int i = 0; i < BOOT_LINE_LENGTH; i++)
 		ba->CommandLine[i] = p->cmdline[i];
-	ba->memSizeActual = p->mem_size;
+	ba->memSizeActual = (uint32_t)(mem_end - kpa0);
 
 	/* The display buffer the bootloader left, handed to XNU the way iBoot
 	 * does it: PE_current_console() turns boot_args.Video into the console
@@ -548,6 +573,10 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 	if (entry_pa >= kernel_end)
 		return fail("entry outside the kernel");
 	ex_boot_args = ba_pa;
+	kv("kva0", kva0);
+	kv("kpa0", kpa0);
+	out("\n");
+	kv("memSize", mem_end - kpa0);
 	kv("adt_pa", adt_pa);
 	kv("boot_args", ba_pa);
 	out("\n");
