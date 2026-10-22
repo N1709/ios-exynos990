@@ -26,7 +26,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 import adt  # noqa: E402
 
-MODELS = ['x1s', 'y2s', 'z3s', 'r8s', 'c1s', 'c2s', 'win2']
+MODELS = ['x1s', 'y2s', 'z3s', 'r8s', 'c1s', 'c2s']
 BOOT_BASE = 0x10000000
 KERNEL_OFFSET = 0x8000
 RAMDISK_OFFSET = 0x1000000
@@ -111,7 +111,14 @@ def check_adt(model, tmp):
         return None
     dram_base = struct.unpack('<Q', chosen.prop('dram-base'))[0]
     dram_size = struct.unpack('<Q', chosen.prop('dram-size'))[0]
-    check(dram_base == 0x880000000, f'/chosen dram-base = 0x{dram_base:x}')
+    consts = board_constants()
+    check(dram_base == consts['XNU_RAM_BASE'],
+          f'/chosen dram-base = 0x{dram_base:x} == XNU_RAM_BASE')
+    # The first 0xAD00000 of the high bank is sec_rdx_bootdev, the
+    # bootloader's RAM-dump carveout (exynos9830-rmem.dtsi:65-70, and the
+    # phone's /proc/iomem shows it as reserved): XNU must start past it.
+    check(dram_base >= 0x88AD00000,
+          f'/chosen dram-base 0x{dram_base:x} is past sec_rdx_bootdev')
     check(dram_size > 0, f'/chosen dram-size = 0x{dram_size:x}')
     cpus = next((c for c in root.children if c.name == 'cpus'), None)
     check(cpus is not None, '/cpus exists')

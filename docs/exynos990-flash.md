@@ -22,7 +22,7 @@ tools/exynos990-make-boot.sh <kernel.development.arm64> z3s
 ```
 
 It writes `out/exynos990/boot-z3s.img` and prints the sha256.  The model is
-one of `x1s y2s z3s r8s c1s c2s win2` (default `z3s` = Galaxy S20 Ultra);
+one of `x1s y2s z3s r8s c1s c2s` (default `z3s` = Galaxy S20 Ultra);
 the model decides the panel, the canvas size and the cpu list of the ADT.
 
 The steps of that script, if you want to run them by hand:

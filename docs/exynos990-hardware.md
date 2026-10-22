@@ -586,7 +586,6 @@ kept in one place here.
 | r8s | Galaxy S20 FE | `exynos990-r8s_input_common.dtsi` | `touchscreen@20` (zinitix) **and** `tsp_stm touchscreen@49` (STM) on `hsi2c_15` |
 | c1s | Galaxy Note 20 | `exynos9830-c1_input_common.dtsi` (includes `exynos9830-canvas_input_common.dtsi`) | `tsp_lsi touchscreen@48` on `hsi2c_15` + Wacom on `hsi2c_44` |
 | c2s | Galaxy Note 20 Ultra | `exynos9830-c2_input_common.dtsi` (includes the canvas file) | `tsp_lsi touchscreen@48` on `hsi2c_15` + Wacom on `hsi2c_44` |
-| win2 | Galaxy S10 5G | `exynos9830-win2_input_common.dtsi` | `touchscreen@49` (STM) on `hsi2c_15` **and** `touchscreen@48` (sec_ts) on `hsi2c_13` |
 
 Model → input file mapping comes from the model overlays, e.g.
 `arch/arm64/boot/dts/samsung/exynos990-x1s_common.dtsi:18`
@@ -627,8 +626,6 @@ The touch I2C bus pin group `tspi2c_bus` (`gpp5-6`, `gpp5-7`, function 3) is in
 | c2s (base) | `tsp_lsi touchscreen@48` | `0x48` | `sec,sec_ts` | `sec,irq_gpio = <&gpa1 0 0>` | **none** (the firmware line is commented out) | `arch/arm64/boot/dts/samsung/exynos9830-c2_input_common.dtsi:14-21` |
 | c2s (21-24) | `tsp_lsi touchscreen@48` | `0x48` | `sec,sec_ts` | as above | `tsp_sec/y79a_c2_4layer.bin` | `arch/arm64/boot/dts/samsung/exynos990-c2s_eur_open_21.dts:214` (also 22/23/24) |
 | c2s (openx 16-19) | `tsp_lsi touchscreen@48` | `0x48` | `sec,sec_ts` | as above | `tsp_sec/y79a_c2_6layer.bin` ×2, `tsp_sec/y79a_c2_4layer.bin` ×2 | `arch/arm64/boot/dts/samsung/exynos990-c2s_eur_openx_16.dts:353` (also 17/18/19) |
-| win2 | `touchscreen@49` | `0x49` | `stm,fts_touch` | `stm,irq_gpio = <&gpa1 0 0>` | **none** (commented out: `tsp_stm/fts9cu80f_winner.fw`) | `arch/arm64/boot/dts/samsung/exynos9830-win2_input_common.dtsi:106-125` |
-| win2 (sub-touch) | `touchscreen@48` on `hsi2c_13` | `0x48` | `sec,sec_ts` | `sec,irq_gpio = <&gpa3 7 0>` | **none** (commented out: `tsp_sec/y761_winner.bin`) | `arch/arm64/boot/dts/samsung/exynos9830-win2_input_common.dtsi:139-161` |
 
 `sec,tsp-id_gpio` appears only on the hubble family (x1s, y2s, z3s), always as
 `&gpm21 0 0` — for example `arch/arm64/boot/dts/samsung/exynos990-x1s_eur_open_05.dts:124`.
@@ -675,12 +672,11 @@ Node: `gpio_keys`, compatible `gpio-keys`, `status = "okay"`, pinctrl
 Pin groups (all function `0xf`, no pull, no drive) live in `pinctrl_0`
 @ `0x15850000` — `arch/arm64/boot/dts/samsung/exynos9830-hubble_input_common.dtsi:44-64`.
 
-The same three-key set is repeated verbatim in the r8s, canvas (c1s/c2s) and
-win2 input files:
+The same three-key set is repeated verbatim in the r8s and canvas (c1s/c2s)
+input files:
 
 - `arch/arm64/boot/dts/samsung/exynos990-r8s_input_common.dtsi:17-39`
 - `arch/arm64/boot/dts/samsung/exynos9830-canvas_input_common.dtsi:21-43`
-- `arch/arm64/boot/dts/samsung/exynos9830-win2_input_common.dtsi:17-39`
 
 `gpa0`/`gpa1`/`gpa2` belong to `pinctrl_0` (ALIVE, `0x15850000`) —
 `arch/arm64/boot/dts/exynos/exynos9830.dts:1211-1213`.
@@ -1003,8 +999,8 @@ chosen: chosen {
 
 | Value | Models | Source |
 | --- | --- | --- |
-| `root=/dev/ram0 androidboot.boot_devices=13100000.ufs` | x1s, y2s, z3s, x1slte(00 only, with `sec_debug.cp=0`), win2… | e.g. `arch/arm64/boot/dts/samsung/exynos990-x1s_eur_open_05.dts:92-94` |
-| `root=/dev/ram0 androidboot.boot_devices=13100000.ufs sec_debug.cp=0` | c1s, c2s, r8s, win2, y2slte, x1slte | e.g. `arch/arm64/boot/dts/samsung/exynos990-c1s_eur_open_21.dts:153` |
+| `root=/dev/ram0 androidboot.boot_devices=13100000.ufs` | x1s, y2s, z3s, x1slte(00 only, with `sec_debug.cp=0`)… | e.g. `arch/arm64/boot/dts/samsung/exynos990-x1s_eur_open_05.dts:92-94` |
+| `root=/dev/ram0 androidboot.boot_devices=13100000.ufs sec_debug.cp=0` | c1s, c2s, r8s, y2slte, x1slte | e.g. `arch/arm64/boot/dts/samsung/exynos990-c1s_eur_open_21.dts:153` |
 
 `androidboot.boot_devices=13100000.ufs` confirms the UFS HCI base as
 `0x13100000` (§5).
@@ -1054,7 +1050,7 @@ assumption, not an independent 8895 hardware survey.
 Each item is something the kernel tree cannot answer. The first three block
 the next milestone.
 
-1. **Exact model code.** Which of x1s / y2s / z3s / r8s / c1s / c2s / win2 is
+1. **Exact model code.** Which of x1s / y2s / z3s / r8s / c1s / c2s is
    the phone? It decides the panel, the touch controller, the touch firmware
    and the keys. Read `ro.boot.hardware` and the DT `compatible` string, or
    look at the About screen / IMEI model.
@@ -1292,7 +1288,7 @@ when it is 3 (patch `0128`), capping one request at
 | Firmware | `tsp_sec/y79a_x1.bin` (x1s), `y79a_z3.bin` (z3s), `y771_c1.bin` (c1s) | `samsung/exynos9830-{hubblex1,hubblez3}_input_common.dtsi`, `samsung/exynos9830-c1_input_common.dtsi` |
 
 Model coverage of that one node: `x1s`/`y2s`/`z3s` include
-`exynos9830-hubble_input_common.dtsi`; `c1s`/`c2s`/`win2` include
+`exynos9830-hubble_input_common.dtsi`; `c1s`/`c2s` include
 `exynos9830-canvas_input_common.dtsi`, whose `tsp_lsi: touchscreen@48` is the
 same `sec,sec_ts` node on the same bus.  The **Galaxy S20 FE (`r8s`) is the
 exception**: `exynos990-r8s_input_common.dtsi:101-144` puts a

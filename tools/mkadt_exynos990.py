@@ -154,12 +154,6 @@ MODELS = {
         # exynos9830-display-lcd.dtsi: s6e3hac_ddi, resolution = <1440 3088>
         panel='s6e3hac',
     ),
-    'win2': dict(
-        name='Galaxy S10 5G (SM-G973F)',
-        canvas=(1440, 3040),
-        # exynos9830-display-lcd.dtsi: s6e3ha9_ddi, resolution = <1440 3040>
-        panel='s6e3ha9',
-    ),
 }
 
 # The port targets the whole Exynos 990 family; the default is the phone

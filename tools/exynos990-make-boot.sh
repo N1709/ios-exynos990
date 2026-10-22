@@ -4,7 +4,7 @@
 #   exynos990-make-boot.sh KERNEL_MACHO [MODEL] [OUTDIR]
 #
 # KERNEL_MACHO is the kernel the macOS CI built (the artifact "xnu-kernel",
-# kernel.development.*), MODEL is one of x1s y2s z3s r8s c1s c2s win2
+# kernel.development.*), MODEL is one of x1s y2s z3s r8s c1s c2s
 # (default z3s = Galaxy S20 Ultra) and OUTDIR defaults to out/exynos990.
 #
 # The script does the whole chain:
@@ -32,9 +32,9 @@ kernel=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
 model=${2:-z3s}
 outdir=${3:-out/exynos990}
 case "$model" in
-x1s|y2s|z3s|r8s|c1s|c2s|win2) ;;
+x1s|y2s|z3s|r8s|c1s|c2s) ;;
 *)
-	echo "error: unknown model '$model' (x1s y2s z3s r8s c1s c2s win2)" >&2
+	echo "error: unknown model '$model' (x1s y2s z3s r8s c1s c2s)" >&2
 	exit 2
 	;;
 esac

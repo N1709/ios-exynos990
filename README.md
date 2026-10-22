@@ -21,7 +21,6 @@ backboardd and SpringBoard.
 | `r8s` | Galaxy S20 FE         | 1080x2400 `ea8076` | zinitix `0x20` / STM `0x49` |
 | `c1s` | Galaxy Note 20        | 1080x2400 `s6e3hab_fhd` | sec_ts `0x48` |
 | `c2s` | Galaxy Note 20 Ultra  | 1440x3088 `s6e3hac` | sec_ts `0x48` |
-| `win2`| Galaxy S10 5G         | 1440x3040 `s6e3ha9` | sec_ts `0x48` |
 
 The boot chain differs from the older Exynos 8895 (Galaxy S8) this repository
 started with: these phones boot from the `boot` partition with an Android boot

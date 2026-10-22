@@ -23,7 +23,6 @@ Exynos 990 (universal9830) boards in the Android kernel tree:
 | r8s   | Galaxy S20 FE        | 1080x2400      | `ea8076/ea8079/s6e3fc3` |
 | c1s   | Galaxy Note 20       | 1080x2400      | `s6e3hab_fhd` |
 | c2s   | Galaxy Note 20 Ultra | 1440x3088      | `s6e3hac` |
-| win2  | Galaxy S10 5G        | 1440x3040      | `s6e3ha9` |
 
 **The port covers the whole Exynos 990 family**; the tooling takes
 `--model` and defaults to `z3s`, the device being brought up here:
