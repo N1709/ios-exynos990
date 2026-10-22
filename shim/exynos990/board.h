@@ -108,20 +108,22 @@
 #define CLK_BASE			0x1a330000UL
 
 /* ---- DRAM ----------------------------------------------------------------
- * UNVERIFIED on the phone.  exynos9830.dts has no memory node at all (the
- * S20 board trees in the Android kernel are "open" trees: no DRAM
- * description), and the bootloader passes its own map to the kernel.
- * The Exynos 9820 tree in the same kernel describes memory@80000000
- * (2 GiB), memory@880000000 (2 GiB) and memory@900000000 (0x80000000),
- * which is where the 0x880000000 high bank comes from.
+ * Measured on the phone (TWRP, 2026-10-22): /proc/iomem lists
+ * "880000000-88acfffff : reserved" at the start of the high bank, and the
+ * bootloader's DT says what that is - sec_rdx_bootdev, the RAM-dump
+ * carveout, <0x8 0x80000000 0x0AD00000>
+ * (exynos9830-rmem.dtsi:65-70).  The high bank is 10 GiB
+ * (0x880000000..0xaffffffff), the next reserved region is at 0x9f0c00000,
+ * so 0x890000000..0x8afffffff is free RAM.
  *
- * Settle it on the phone: TWRP "cat /proc/iomem" and read the System RAM
- * ranges.  The loader prints the MIDR/MPIDR only, it cannot read the map.
+ * The window used to start at 0x880000000 (the 9820-style layout), which
+ * put XNU's zeroed RAM on top of the RAM-dump carveout: the loader wiped
+ * it before every boot.  Keep the 512 MiB size, move the base past it.
  */
 #define LOW_RAM_BASE			0x80000000UL
 #define LOW_RAM_END			0x100000000UL
-#define HIGH_RAM_BASE			0x880000000UL
-#define HIGH_RAM_END			0x900000000UL
+#define HIGH_RAM_BASE			0x890000000UL
+#define HIGH_RAM_END			0x8b0000000UL
 
 /* XNU's RAM window: the high bank, like the S8 (Exynos 8895) port.  The
  * low banks hold the EL3 monitor (0xBAB00000), abox, the modem and the

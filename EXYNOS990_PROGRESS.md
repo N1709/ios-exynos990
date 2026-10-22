@@ -335,3 +335,27 @@ ring (the old check assumed a 512 KiB sink).
 
 Not tested: whether XNU reaches `klog_init()` at all; whether S-Boot leaves
 `log_pstore` alone across the reset.
+
+## XNU's RAM window was on top of a bootloader carveout
+
+Asked for work that does not need the phone, the board facts already
+collected answer the DRAM question.  `/proc/iomem` from the phone:
+
+```
+880000000-88acfffff : reserved
+```
+
+and the bootloader DT names that range: `sec_rdx_bootdev`, the RAM-dump
+carveout, `<0x8 0x80000000 0x0AD00000>`
+(`arch/arm64/boot/dts/exynos/exynos9830-rmem.dtsi:65-70`).  The next
+reserved range is `0x9f0c00000`, so `0x890000000..0x8afffffff` is free RAM.
+
+`shim/exynos990/board.h` and `tools/mkadt_exynos990.py` both put XNU at
+`0x880000000`, i.e. every boot the loader zeroed 512 MiB starting inside
+that carveout before jumping.  The window now starts at `0x890000000`
+(size unchanged, 512 MiB); the payload header rebuilds with
+`phys_base = 0x890000000`.
+
+This is a static finding, not a proven boot fix: the phone still has to be
+booted once with the new image, and the pstore log read back, before the
+JUMP TO XNU / panic point is known.

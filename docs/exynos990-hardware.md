@@ -745,11 +745,15 @@ The 9830 tree contains **no** `memory`/`memory@` node. (The older Exynos 9820
 tree does: `arch/arm64/boot/dts/exynos/exynos9820.dts:73-86`.) Consequently the
 DRAM layout is supplied by the bootloader, not by the DT.
 
-> **UNVERIFIED.** The DRAM bank layout. `shim/exynos990/board.h:77-86`
-> currently assumes the 9820-style layout (low bank `0x80000000`, high bank
-> `0x880000000`) and marks it "verify". Settle it by reading `/proc/iomem`
-> (or the equivalent) on the phone under TWRP, and by dumping the DT the
-> bootloader actually hands over.
+> **MEASURED (2026-10-22).** `/proc/iomem` under TWRP shows the high bank
+> starting at `0x880000000`, with `880000000-88acfffff : reserved` at its
+> start. That reservation is `sec_rdx_bootdev`, the RAM-dump carveout, whose
+> DT node is `<0x8 0x80000000 0x0AD00000>`
+> (`arch/arm64/boot/dts/exynos/exynos9830-rmem.dtsi:65-70`); the next reserved
+> range is `0x9f0c00000`, so `0x890000000..0x8afffffff` is free RAM.
+> XNU's window therefore runs from `0x890000000`, not from the start of the
+> bank: placing it at `0x880000000` put the loader's 512 MiB zeroing on top
+> of the RAM-dump carveout on every boot.
 >
 > Note that the 9820 tree's memory node is a *different SoC*; it is cited
 > here only to show what the 9830 tree does **not** contain.

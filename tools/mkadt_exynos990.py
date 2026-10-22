@@ -60,8 +60,12 @@ import mkadt
 # SoC constants (arch/arm64/boot/dts/exynos/exynos9830.dts)
 # --------------------------------------------------------------------------
 
-# High DRAM bank; overridable on the command line.
-DRAM_BASE = 0x880000000
+# High DRAM bank; overridable on the command line.  The bank starts at
+# 0x880000000, but its first 0xAD00000 bytes are sec_rdx_bootdev, the
+# bootloader's RAM-dump carveout (exynos9830-rmem.dtsi:65-70, and the
+# phone's /proc/iomem shows "880000000-88acfffff : reserved"), so XNU is
+# placed past it.
+DRAM_BASE = 0x890000000
 # 512 MiB: the S8 port panicked in kmem_range_init with the full 2 GiB bank.
 DRAM_SIZE = 0x20000000
 # armv8-timer clock-frequency in exynos9830.dts.
