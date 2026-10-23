@@ -779,6 +779,14 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 	 * never appears the loader did not execute at all. */
 	paint_band(&fb, 0xff00ff00u);
 
+	/* TEMPORARY: one test frame with DPP0 -> DECON window 5, colour bars
+	 * at 0x894000000.  The DSIM link is still down, so the frame cannot
+	 * reach the panel yet; this checks the DECON half on its own (shadow
+	 * commit, trigger, DMA address) and the log is rewritten right after
+	 * in case the trigger stalls the bus. */
+	display_test(0x894000000ull, 1440, 3200, kv, out);
+	klog_dump();
+
 	/* No bulk wipe.  sboot leaves the previous OS's data in RAM, but the
 	 * VM zeroes every page it hands out and the kernel image, BSS and
 	 * boot_args are written explicitly below.  The wipe was also harmful:

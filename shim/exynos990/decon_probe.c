@@ -55,11 +55,23 @@
 #define IDMA_SRC_STRIDE_0	0x0050	/* chroma stride */
 #define IDMA_SRC_STRIDE_1	0x0054	/* plane 0 / plane 1 stride */
 
+/* DECON shadow/trigger (regs-decon.h) */
+#define DECON_SHADOW_REG_UPDATE_REQ	0x0060
+#define DECON_SW_UPDATE_FOR_DECON	(0x3fu | (1u << 31))
+#define DECON_HW_SW_TRIG_CONTROL	0x0070
+#define DECON_SW_TRIG_EN		(1u << 8)
+
+/* SYSMMU of the DPU (exynos9830-sysmmu.dtsi): reg 0 is SYSMMU_CTRL. */
+#define SYSMMU_DPU0		0x19100000UL
+#define SYSMMU_DPU1		0x19110000UL
+
 /* DSIM (regs-dsim.h) */
 #define DSIM_VERSION		0x00
 #define DSIM_LINK_STATUS0	0x08
 #define DSIM_LINK_STATUS1	0x0c
+#define DSIM_LINK_STATUS2	0x10
 #define DSIM_LINK_STATUS3	0x14
+#define DSIM_CONFIG		0x4c
 #define DSIM_PLL_STABLE		(1u << 0)
 
 #define NUM_WINDOWS	8
@@ -177,6 +189,82 @@ void decon_probe(void (*kv)(const char *, uint64_t), void (*out)(const char *),
 	kv("DSIM_VER", rd(DSIM + DSIM_VERSION));
 	kv("DSIM_L0", rd(DSIM + DSIM_LINK_STATUS0));
 	kv("DSIM_L1", rd(DSIM + DSIM_LINK_STATUS1));
+	kv("DSIM_L2", rd(DSIM + DSIM_LINK_STATUS2));
+	kv("DSIM_L3", rd(DSIM + DSIM_LINK_STATUS3));
+	kv("DSIM_CFG", rd(DSIM + DSIM_CONFIG));
 	kv("DSIM_PLL", (rd(DSIM + DSIM_LINK_STATUS3) & DSIM_PLL_STABLE) ? 1 : 0);
+	/* Is the DPU's IOMMU translating, or bypassed?  The bootloader has to
+	 * leave it in some state for the logo buffer, and the answer decides
+	 * whether a new framebuffer address has to be mapped first. */
+	kv("SYSMMU_DPU0", rd(SYSMMU_DPU0 + 0x0000));
+	kv("SYSMMU_DPU1", rd(SYSMMU_DPU1 + 0x0000));
+	kv("SWTRIG", rd(DECON + DECON_HW_SW_TRIG_CONTROL));
+	kv("UPDREQ", rd(DECON + DECON_SHADOW_REG_UPDATE_REQ));
 	out("\n");
+}
+
+/* ---- TEMPORARY: first attempt at putting pixels on the panel -------------
+ * The bootloader leaves DECON running with window 5 mapped to DPP0 and the
+ * panel scanning out its last frame in self refresh, but DPP0 has no buffer
+ * (base_y = base_c = stride = 0) and the DSIM link is down.  Fill a memory
+ * area with colour bars, point DPP0 at it, commit the shadow registers and
+ * ask DECON for one frame.  Without the DSIM bring-up the frame will not
+ * reach the panel; the point of this step is that the DECON side can be
+ * checked on its own (GLOBAL run status, DSI FIFO, IOMMU faults) instead of
+ * debugging everything at once.
+ */
+static void wr(uintptr_t a, uint32_t v)
+{
+	*(volatile uint32_t *)(uintptr_t)a = v;
+}
+
+int display_test(uintptr_t fb_pa, unsigned w, unsigned h,
+		 void (*kv)(const char *, uint64_t), void (*out)(const char *))
+{
+	static const uint32_t bars[8] = {
+		0xffffffff, 0xff0000ff, 0xff00ff00, 0xffffff00,
+		0xffff0000, 0xffff00ff, 0xff00ffff, 0xff202020,
+	};
+	volatile uint32_t *p = (volatile uint32_t *)(uintptr_t)fb_pa;
+	uint32_t con;
+	unsigned x, y;
+	int spin;
+
+	if (!w || !h || w > 1440 || h > 3200)
+		return -1;
+
+	for (y = 0; y < h; y++) {
+		for (x = 0; x < w; x++)
+			p[(uintptr_t)y * w + x] = bars[(x * 8) / w];
+	}
+	/* A white block in the top left corner: if the panel ever shows the
+	 * bars, this says the origin and the stride are right. */
+	for (y = 0; y < 64; y++) {
+		for (x = 0; x < 64; x++)
+			p[(uintptr_t)y * w + x] = 0xffffffff;
+	}
+
+	wr(IDMA(0) + IDMA_IMG_SIZE, (h << 16) | w);
+	wr(IDMA(0) + IDMA_IN_BASE_ADDR_Y8, (uint32_t)fb_pa);
+	wr(IDMA(0) + IDMA_IN_BASE_ADDR_C8, (uint32_t)fb_pa);
+	wr(IDMA(0) + IDMA_SRC_STRIDE_0, w * 4);
+	wr(IDMA(0) + IDMA_SRC_STRIDE_1, w * 4);
+	con = rd(IDMA(0) + IDMA_IN_CON);
+	con = (con & ~IDMA_IMG_FORMAT_MASK) | IDMA_IMG_FORMAT(0);	/* ARGB8888 */
+	wr(IDMA(0) + IDMA_IN_CON, con);
+
+	wr(DECON + DECON_SHADOW_REG_UPDATE_REQ, DECON_SW_UPDATE_FOR_DECON);
+	for (spin = 0; spin < 1000; spin++) {
+		if (!(rd(DECON + DECON_SHADOW_REG_UPDATE_REQ) & 0x3f))
+			break;
+	}
+	kv("upd_spin", (uint64_t)spin);
+
+	wr(DECON + DECON_HW_SW_TRIG_CONTROL, DECON_SW_TRIG_EN);
+	kv("trig", rd(DECON + DECON_HW_SW_TRIG_CONTROL));
+	kv("global", rd(DECON + GLOBAL_CONTROL));
+	kv("dma0_y", rd(IDMA(0) + IDMA_IN_BASE_ADDR_Y8));
+	kv("dma0_sz", rd(IDMA(0) + IDMA_IMG_SIZE));
+	out("\n");
+	return 0;
 }

@@ -283,6 +283,29 @@ Note that the ring record is useful only when XNU never reaches
 happened here (`JUMP TO XNU` is the last line).  `prev_ring_park()` in
 the loader copies the zone to log_kernel for the case where it does not.
 
+### Display: what the phone says (2026-10-23, dump 7)
+
+The loader's DECON probe plus the first test frame (colour bars at
+`0x894000000`, DPP0, window 5, shadow commit + SW trigger) gave:
+
+    DSIM_CFG=0x4887cff  DSIM_L0/L1/L2/L3=0  PLL=0
+    SYSMMU_DPU0=0x4     SYSMMU_DPU1=0x4     (CTRL_ENABLE is 0x5: bypassed)
+    dma0_sz write stuck (0xc8005a0 = 1440x3200)
+    dma0_y read back 0, UPDREQ never cleared (upd_spin=1000), trig pulsed
+
+so the DPP size register takes writes but the base address does not, and the
+shadow update never completes: DECON's commit waits for a DSI link that is
+not there, so the DSIM bring-up is the gate, not DECON.  Two more facts to
+respect: the SYSMMU of the DPU is bypassed, and every framebuffer address on
+this phone is 36-bit (`0x880000000` is where DRAM starts) while the IDMA
+base register is 32-bit - the bootloader's own `0x40000000` is therefore an
+IOVA, i.e. either the SYSMMU has to be enabled and given a table, or the
+address path has to be understood before a frame can be pointed anywhere.
+
+The next display step is the DSIM link: PLL parameters for the panel's HS
+clock, M4M4 PHY power-up, lane enable, then the same DPP0/DECON commit (it
+should complete once the link is alive).
+
 ## Next action (scope: E3–E5, E6 deferred)
 
 E1 is done on the phone and E2 is one boot away from being either proven or
