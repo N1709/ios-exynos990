@@ -1,30 +1,33 @@
 /* SPDX-License-Identifier: GPL-2.0-only
  * Exynos 990 DSIM0 + M4M4 PHY bring-up (loader side).
  *
- * The bootloader programs the display, shows the boot logo and then hands
- * over with the DSI link shut down but the panel still holding its last
- * frame in self refresh.  DECON is left configured for that panel, yet its
- * shadow commit never completes while the link is down, so no new frame can
- * be pushed.  This file reopens the link with the same register values the
- * vendor driver uses for the S6E3HAB panel (1440x3200, 4 lanes, 1157 Mb/s,
- * DSC 2 slices), in the order dsim_reg.c does it:
+ * The bootloader programs the display, shows the boot logo and hands over
+ * with the DSI link shut down, yet the panel still holds its last frame in
+ * self refresh.  DECON stays configured for that panel, but its shadow
+ * commit never completes while the link is down, so no new frame can be
+ * pushed.  This reopens the link with the values the vendor driver uses for
+ * the S6E3HAB panel (1440x3200, 4 lanes, 1157 Mb/s, DSC 2 slices), in the
+ * order of dsim_reg_disable()'s counterpart in
+ * drivers/video/fbdev/exynos/dpu30/cal_9830/dsim_reg.c:2256-2295:
  *
- *   isolation bypass -> SYSREG reset assert -> DSIM reset -> PHY defaults
- *   -> PLL lock -> lane enable -> reset release -> timing/config -> start
+ *   select DPHY reset control -> OSC link clock -> DSIM sw reset -> lanes
+ *   -> escape clock -> word clock -> assert DPHY reset -> PHY defaults and
+ *   P-D-PHY timings -> PLL -> lane power -> release DPHY reset -> word
+ *   clock from PLL -> link config -> HS clock request
  *
- * Every value is taken from the vendor tree:
- *   drivers/video/fbdev/exynos/dpu30/dsim_reg.c
- *   drivers/video/fbdev/exynos/dpu30/cal_9830/regs-dsim.h
- *   arch/arm64/boot/dts/exynos/exynos9830-dpu.dtsi
- *   arch/arm64/boot/dts/exynos/exynos9830-display-lcd.dtsi (S6E3HAB)
+ * Register offsets: cal_9830/regs-dsim.h.  PHY module base is 0x190E0100,
+ * so its MC block is at 0x190E0300 and the MD lanes at 0x190E0400+0x100n;
+ * the PLL at 0x190E0100 is inside the top wrapper and keeps working even
+ * while the module is held in reset (which is why an early attempt could
+ * lock the PLL but never see PHY_READY).
  */
 #include <stdint.h>
 #include "dsim_init.h"
 
 #define DSIM		0x190C0000UL
-#define PHY		0x190E0000UL	/* BIAS at +0x00, module at +0x100 */
+#define PHY_TOP		0x190E0000UL	/* BIAS at +0x00 */
+#define PHY_MOD		0x190E0100UL	/* PLL/MC/MD */
 #define DISP_SYSREG	0x19021000UL
-#define PMU		0x15860000UL
 
 /* DSIM registers (regs-dsim.h) */
 #define R_SWRST		0x04
@@ -47,15 +50,15 @@
 #define R_CMD_TE1	0x88
 
 /* PHY module registers, absolute */
-#define P_PLL_CON(n)	(PHY + 0x100 + 4 * (n))
-#define P_PLL_STAT	(PHY + 0x140)
-#define P_MC_GNR0	(PHY + 0x200)
-#define P_MC_GNR1	(PHY + 0x204)
-#define P_MC_ANA0	(PHY + 0x208)
-#define P_MC_ANA1	(PHY + 0x20C)
-#define P_MC_TIME(n)	(PHY + 0x230 + 4 * (n))
-#define P_MC_DESKEW	(PHY + 0x250)
-#define P_MD(n, reg)	(PHY + 0x300 + 0x100 * (n) + (reg))
+#define P_PLL_CON(n)	(PHY_MOD + 4 * (n))
+#define P_PLL_STAT	(PHY_MOD + 0x40)
+#define P_MC_GNR0	(PHY_MOD + 0x200)
+#define P_MC_GNR1	(PHY_MOD + 0x204)
+#define P_MC_ANA0	(PHY_MOD + 0x208)
+#define P_MC_ANA1	(PHY_MOD + 0x20C)
+#define P_MC_TIME(n)	(PHY_MOD + 0x230 + 4 * (n))
+#define P_MC_DESKEW	(PHY_MOD + 0x250)
+#define P_MD(n, reg)	(PHY_MOD + 0x300 + 0x100 * (n) + (reg))
 #define P_MD_TIME(n, k)	P_MD(n, 0x30 + 4 * (k))
 
 #define PHY_READY	(1u << 1)
@@ -70,8 +73,8 @@ static uint32_t rd(uintptr_t a)
 	return *(volatile uint32_t *)a;
 }
 
-/* Wait until (rd(a) & mask) == mask, bounded so a dead link cannot hang the
- * loader (the ring is written before this runs, so a timeout is visible). */
+/* Bounded wait so a dead link cannot hang the loader; the ring is written
+ * before this runs, so a timeout leaves a readable log. */
 static int poll_set(uintptr_t a, uint32_t mask, unsigned spin)
 {
 	while (spin--) {
@@ -88,46 +91,40 @@ int dsim_bringup(void (*kv)(const char *, uint64_t), void (*out)(const char *))
 
 	out("DSIM bring-up\n");
 
-	/* The PMU isolation bit and the SYSREG reset are left alone: the
-	 * bootloader had to open them to show the logo, the previous attempt
-	 * died on the first PMU access (the log stopped right here), and the
-	 * PMU power domains on this chip are reached through an SMC anyway.
-	 * If the PHY below turns out to be held in reset, these come back. */
+	/* 1. Route the DPHY reset control to DSIM0 (bit 4 clear, as the
+	 *    vendor's dpu_sysreg_select_dphy_rst_control(..., 0) does).  The
+	 *    top reset itself is asserted later: doing it here makes the
+	 *    SWRST access below hang, which is exactly where the first
+	 *    attempt stopped. */
+	out("d0 selrsten\n");
+	kv("sysreg", rd(DISP_SYSREG + 0x8));
+	wr(DISP_SYSREG + 0x8, rd(DISP_SYSREG + 0x8) & ~(1u << 4));
 
-	/* 0. The shared PHY is selected and then held in reset, exactly as
-	 *    the vendor driver does before programming it.  Without the
-	 *    assert the MC/MD blocks ignore writes (the previous run read 0
-	 *    back from MC_GNR_CON0). */
-	out("d0 sysreg\n");
-	kv("sysreg_before", rd(DISP_SYSREG + 0x8));
-	wr(DISP_SYSREG + 0x8, rd(DISP_SYSREG + 0x8) & ~((1u << 4) | 1u));
-	kv("sysreg_assert", rd(DISP_SYSREG + 0x8));
-
-	/* 1. DSIM clock from OSC, then a full reset. */
+	/* 2. OSC link clock, then a full DSIM reset. */
 	out("d1 reset\n");
-	clk = rd(DSIM + R_CLK_CTRL) & ~(1u << 26);
-	wr(DSIM + R_CLK_CTRL, clk);
+	wr(DSIM + R_CLK_CTRL, rd(DSIM + R_CLK_CTRL) & ~(1u << 26));
 	wr(DSIM + R_SWRST, 1);
-	if (poll_set(DSIM + R_SWRST, 0, 1000) == 0 && (rd(DSIM + R_SWRST) & 1)) {
+	if (rd(DSIM + R_SWRST) & 1) {
 		out("dsim: reset stuck\n");
 		return -1;
 	}
 
-	/* 4. All lanes on, then the escape clock divider the driver uses for
-	 *    an 18 MHz escape clock (prescaler 4, word clock on). */
+	/* 3. All lanes, escape clock for all lanes, word clock. */
+	out("d2 lanes\n");
 	wr(DSIM + R_CONFIG, (rd(DSIM + R_CONFIG) & ~0x1fu) | 0x1fu);
 	clk = rd(DSIM + R_CLK_CTRL);
-	clk = (clk & ~0x1fu) | 0x1fu;		/* LANE_ESCCLK: all lanes */
+	clk = (clk & ~0x1fu) | 0x1fu;		/* LANE_ESCCLK */
 	clk |= 1u << 17;			/* WORDCLK_EN */
 	wr(DSIM + R_CLK_CTRL, clk);
 
-	/* 5. PHY analog defaults (dsim_reg.c:44-86). */
-	out("d2 phy\n");
-	wr(PHY + 0x00, 0x10);
-	wr(PHY + 0x04, 0x110);
-	wr(PHY + 0x08, 0x3223);
-	wr(PHY + 0x0c, 0x0);
-	wr(PHY + 0x10, 0x0);
+	/* 4. PHY analog defaults (dsim_reg.c:44-86) and the 1157 Mb/s row of
+	 *    dphy_timing[] for the common block and the four data lanes. */
+	out("d3 phy\n");
+	wr(PHY_TOP + 0x00, 0x10);
+	wr(PHY_TOP + 0x04, 0x110);
+	wr(PHY_TOP + 0x08, 0x3223);
+	wr(PHY_TOP + 0x0c, 0x0);
+	wr(PHY_TOP + 0x10, 0x0);
 	for (n = 0; n < 5; n++)
 		wr(P_PLL_CON(n), 0);
 	wr(P_PLL_CON(5), 0x500);
@@ -135,7 +132,6 @@ int dsim_bringup(void (*kv)(const char *, uint64_t), void (*out)(const char *))
 	wr(P_PLL_CON(7), 0x1450);
 	wr(P_PLL_CON(8), 0xa28);
 
-	/* 6. D-PHY timings for the 1157 Mb/s row of dphy_timing[]. */
 	wr(P_MC_TIME(4), 0x1db);
 	wr(P_MC_TIME(0), 0x1220);
 	wr(P_MC_TIME(1), 0x122e);
@@ -149,8 +145,6 @@ int dsim_bringup(void (*kv)(const char *, uint64_t), void (*out)(const char *))
 		wr(P_MD_TIME(n, 2), 0x073b);
 		wr(P_MD_TIME(n, 3), 0x0030);
 	}
-
-	/* 7. Common and per-lane analog blocks. */
 	wr(P_MC_GNR0, 0x0);
 	wr(P_MC_GNR1, 0x1450);
 	wr(P_MC_ANA0, 0x7033);
@@ -164,9 +158,15 @@ int dsim_bringup(void (*kv)(const char *, uint64_t), void (*out)(const char *))
 		wr(P_MD(n, 0x14), 0x0);
 	}
 
-	/* 8. PLL: p=2, m=178, s=2, k=0 (timing,pmsk of the S6E3HAB node),
+	/* 5. Hold the DPHY in reset while the PLL starts (vendor order: after
+	 *    the DSIM reset, before dsim_reg_set_clocks). */
+	out("d4 assert\n");
+	wr(DISP_SYSREG + 0x8, rd(DISP_SYSREG + 0x8) & ~1u);
+	kv("sysreg_rst", rd(DISP_SYSREG + 0x8));
+
+	/* 6. PLL: p=2, m=178, s=2, k=0 - timing,pmsk of the S6E3HAB node -
 	 *    lock counter 500 * p, then enable and wait for lock. */
-	out("d3 pll\n");
+	out("d5 pll\n");
 	wr(P_PLL_CON(1), 0x0);
 	wr(P_PLL_CON(0), 0x1202);
 	wr(P_PLL_CON(2), 0xb2);
@@ -181,20 +181,18 @@ int dsim_bringup(void (*kv)(const char *, uint64_t), void (*out)(const char *))
 	}
 	kv("pll", rd(P_PLL_STAT));
 
-	/* 9. Power the lanes, then release the top reset.  The bootloader
-	 * leaves M_RESETN_M4S4_TOP asserted; while it is, MC/MD swallow
-	 * writes (the previous run read 0 right after writing 0xFFFFFFFF)
-	 * but the PLL in the top wrapper still locks. */
-	out("d4 lanes\n");
+	/* 7. Power the lanes. */
+	out("d6 lanes\n");
 	wr(P_MC_GNR0, 0xffffffffu);
 	for (n = 0; n < 4; n++)
 		wr(P_MD(n, 0x00), 0xffffffffu);
 	kv("mc_gnr_pre", rd(P_MC_GNR0));
 	kv("md0_gnr_pre", rd(P_MD(0, 0x00)));
 
-	out("d5 release\n");
+	/* 8. Release the DPHY reset, then wait for PHY_READY everywhere. */
+	out("d7 release\n");
 	wr(DISP_SYSREG + 0x8, rd(DISP_SYSREG + 0x8) | 1u);
-	kv("sysreg_after", rd(DISP_SYSREG + 0x8));
+	kv("sysreg_rel", rd(DISP_SYSREG + 0x8));
 
 	if (poll_set(P_MC_GNR0, PHY_READY, 20000)) {
 		kv("mc_gnr", rd(P_MC_GNR0));
@@ -210,11 +208,10 @@ int dsim_bringup(void (*kv)(const char *, uint64_t), void (*out)(const char *))
 	}
 	kv("lanes", 0xf);
 
-	/* 10. Switch the word clock to the PLL. */
+	/* 9. Word clock from the PLL, then the fixed link configuration. */
+	out("d8 config\n");
 	clk = rd(DSIM + R_CLK_CTRL) | (1u << 26);
 	wr(DSIM + R_CLK_CTRL, clk);
-
-	/* 11. Fixed link configuration (command mode, RGB24, 4 lanes). */
 	wr(DSIM + R_SFR_CTRL, 0x2);
 	clk = rd(DSIM + R_CLK_CTRL) | (1u << 25);
 	clk = (clk & ~0x1fu) | 0x1fu;
@@ -233,7 +230,7 @@ int dsim_bringup(void (*kv)(const char *, uint64_t), void (*out)(const char *))
 	wr(DSIM + R_CMD_TE0, 28);
 	wr(DSIM + R_CMD_TE1, 0x2cb933c9);
 
-	/* 12. Escape clock back on, then request the HS clock. */
+	/* 10. Escape clock and the HS clock request. */
 	clk = rd(DSIM + R_CLK_CTRL);
 	clk = (clk & ~0xffu) | 0x04;		/* ESC_PRESCALER(4) */
 	clk |= 1u << 16;			/* ESCCLK_EN */

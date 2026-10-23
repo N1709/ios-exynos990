@@ -1,0 +1,23 @@
+Subject: [PATCH] exynos990: mark the steps between the physmap and TTBR0
+
+Patch 0140 put a mark on arm_vm_physmap_init and it completes, yet mark
+10 (TTBR0 dropped, TLB flushed) is never written.  The only code between
+them is set_mmu_ttb_alternate(), ml_enable_monitor(), the console
+relocation and set_mmu_ttb(invalid_ttep).  Mark each one so the next run
+names the call that stops the kernel instead of leaving a gap of four.
+
+diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -2262,4 +2262,6 @@
+ 	set_mmu_ttb_alternate(cpu_ttep & TTBR_BADDR_MASK);
++	sweet_early_mark(38, "alternate ttbr set");
+ 
+ 	ml_enable_monitor();
++	sweet_early_mark(39, "monitor enabled");
+ 
+@@ -2306,3 +2308,4 @@
+ 	set_mmu_ttb(invalid_ttep & TTBR_BADDR_MASK);
++	sweet_early_mark(41, "ttbr0 switched to invalid");
+ 
+ 	flush_mmu_tlb();
