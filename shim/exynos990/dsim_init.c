@@ -94,6 +94,15 @@ int dsim_bringup(void (*kv)(const char *, uint64_t), void (*out)(const char *))
 	 * PMU power domains on this chip are reached through an SMC anyway.
 	 * If the PHY below turns out to be held in reset, these come back. */
 
+	/* 0. The shared PHY is selected and then held in reset, exactly as
+	 *    the vendor driver does before programming it.  Without the
+	 *    assert the MC/MD blocks ignore writes (the previous run read 0
+	 *    back from MC_GNR_CON0). */
+	out("d0 sysreg\n");
+	kv("sysreg_before", rd(DISP_SYSREG + 0x8));
+	wr(DISP_SYSREG + 0x8, rd(DISP_SYSREG + 0x8) & ~((1u << 4) | 1u));
+	kv("sysreg_assert", rd(DISP_SYSREG + 0x8));
+
 	/* 1. DSIM clock from OSC, then a full reset. */
 	out("d1 reset\n");
 	clk = rd(DSIM + R_CLK_CTRL) & ~(1u << 26);
@@ -172,16 +181,27 @@ int dsim_bringup(void (*kv)(const char *, uint64_t), void (*out)(const char *))
 	}
 	kv("pll", rd(P_PLL_STAT));
 
-	/* 9. Turn the lanes on and wait for PHY_READY on each. */
+	/* 9. Power the lanes, then release the top reset.  The bootloader
+	 * leaves M_RESETN_M4S4_TOP asserted; while it is, MC/MD swallow
+	 * writes (the previous run read 0 right after writing 0xFFFFFFFF)
+	 * but the PLL in the top wrapper still locks. */
 	out("d4 lanes\n");
 	wr(P_MC_GNR0, 0xffffffffu);
+	for (n = 0; n < 4; n++)
+		wr(P_MD(n, 0x00), 0xffffffffu);
+	kv("mc_gnr_pre", rd(P_MC_GNR0));
+	kv("md0_gnr_pre", rd(P_MD(0, 0x00)));
+
+	out("d5 release\n");
+	wr(DISP_SYSREG + 0x8, rd(DISP_SYSREG + 0x8) | 1u);
+	kv("sysreg_after", rd(DISP_SYSREG + 0x8));
+
 	if (poll_set(P_MC_GNR0, PHY_READY, 20000)) {
 		kv("mc_gnr", rd(P_MC_GNR0));
 		out("dsim: common lane not ready\n");
 		return -1;
 	}
 	for (n = 0; n < 4; n++) {
-		wr(P_MD(n, 0x00), 0xffffffffu);
 		if (poll_set(P_MD(n, 0x00), PHY_READY, 20000)) {
 			kv("md_gnr", rd(P_MD(n, 0x00)));
 			out("dsim: data lane not ready\n");
