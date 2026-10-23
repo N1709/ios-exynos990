@@ -211,6 +211,36 @@ sanity check before `ml_io_map_wcomb`.  The panel runs in command mode, so
 the bootloader's own buffer is the only frame DECON will send without being
 reprogrammed.
 
+**But the phone dump says there is no buffer to take over** (`/tmp/opencode/
+dump.txt`, loader run of 2026-10-22): `DECON GLOBAL=0x133` (`run=1`,
+`cmdmode=1`), `DPC0=0x100000` (window 5 enabled, channel 1) and window 5 at
+1440x3200 — yet the layer behind it is empty: DPP0 has the right size
+(`w=0x5a0 h=0xc80`) but `base_y=base_c=0 stride=0`, and `DSIM_LINK_STATUS0/1
+= 0`, `DSIM_PLL=0` (PLL not stable).  The DSI link is down and DECON has no
+DMA source, so the panel is only holding its last frame in self-refresh.
+Writing a framebuffer therefore cannot put text on the screen: E4 has to
+program DPP0 + the DECON trigger (and possibly bring DSIM out of ULPS)
+before a console can be scanned out.  The kernel console is independent of
+this: `PE_kputc` -> `console_write_unbuffered` -> `serial_putc_options` ->
+`uart_putc_options_`, which `0136` hooks, so the klog ring at
+`0xeb308000` gets the text either way (`cons_ops_index` defaults to 0 =
+serial).
+
+**Build 2026-10-23 (run 39879578088, commit `3df0f0a`) succeeded** with the
+relink, the C fix for `sweet_early.c` and `0137`.  The artifact is also on
+branch `ci-kernel` (`git fetch origin ci-kernel`,
+`ci-kernel/kernel.development.exynos990`).  Verified with
+`tools/exynos990-verify-kernel.py --payload`:
+
+    __TEXT 0xfffffff007004000, entry +0x410488, _intstack_low_guard
+    +0x1488000 (PA 0x89248c000), _bootstrap_pagetables +0x172000.
+    Payload: virt_base 0xfffffff006000000 -> __TEXT PA 0x891004000
+    (unchanged, so ADT/boot_args stay at 0x8928b8000/0x8928bb000).
+
+The guard moved down by 0x20000, so `XMARK_PHYS` in the loader is now
+`0x89248c000`; the boot image in `out/exynos990/boot-z3s.img` is built from
+this kernel.  Next: boot it and read the klog + marks.
+
 ## Next action (scope: E3–E5, E6 deferred)
 
 E1 is done on the phone and E2 is one boot away from being either proven or

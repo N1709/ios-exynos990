@@ -40,7 +40,7 @@ TTBR1_WINDOW = 1 << TTBR1_SHIFT
 TTBR1_START = (1 << 64) - TTBR1_WINDOW
 
 # Offsets the loader depends on, relative to __TEXT (the Mach header).
-XMARK_OFF = 0x14a8000     # _intstack_low_guard
+XMARK_OFF = 0x1488000     # _intstack_low_guard
 PT_OFF = 0x172000         # _bootstrap_pagetables
 
 PAYLOAD_MAGIC = b'SWEETXNU'

@@ -250,12 +250,12 @@ static void copy(uintptr_t dst, uintptr_t src, uint64_t n)
 /* ---- TEMPORARY kernel early-mark reader ---------------------------------
  * The kernel's sweet_early_mark() writes "XMARK v1" plus one line per stage
  * into the low page of the interrupt stack by KVA and cleans it to DRAM, so
- * it survives the AP watchdog reset.  The page is at __TEXT + 0x14a8000 by
- * PA (0x8924ac000 for this payload); the KVA depends on the link address,
+ * it survives the AP watchdog reset.  The page is at __TEXT + 0x1488000 by
+ * PA (0x89248c000 for this payload); the KVA depends on the link address,
  * which is the compact 39-bit layout (0xfffffff007004000), so the walk uses
  * the payload's own virt_base instead of a constant.  Print it and clear it
  * for the next kernel.  Remove with sweet_early_mark (patch 0127). */
-#define XMARK_PHYS 0x8924ac000ull
+#define XMARK_PHYS 0x89248c000ull
 
 static uint32_t g_run;	/* loader run counter, rides in the mark page */
 
