@@ -1,70 +1,69 @@
-Subject: [PATCH] exynos990: walk cpu_ttep and boot_tte by hand before the flush
+Subject: [PATCH] exynos990: step marks in the page-table walk
 
-Every mark up to 41 is written while the TLB still holds translations from
-the bootstrap tables, so their success says nothing about the table that is
-about to become live.  Mark 10, the first store after flush_mmu_tlb(), never
-happens.  Walk both tables in software, before the flush, and report where
-the walk stops instead of guessing:
-
-  50..53  cpu_tte  &arm_vm_init   ok / L1 / L2 / L3 invalid
-  54..57  cpu_tte  &cpu_ttep
-  58..61  boot_tte &arm_vm_init
-  62..65  boot_tte &cpu_ttep
-
-A valid BLOCK descriptor at L1 or L2 counts as mapped, a table pointer
-outside the RAM window is reported as 4 instead of being dereferenced, and
-the walk uses the same granule-selected macros the kernel itself uses
-(L1_TABLE_INDEX, L2_TABLE_VA, L3_TABLE_VA), so it is correct for 4K and
-16K pages alike.
+The first version wrote nothing at all, and the reason may be the
+instrument rather than the walk: the log text grows from offset 0 and the
+stage bytes live at +0x800, so a long enough text overwrites the very byte
+it just set.  This version marks every step, so the absence of a mark
+localises the fault:
+    50        block entered
+    54/62/70/78   about to read the L1 entry (cpu/cpu, cpu/boot, boot/cpu, boot/boot)
+    +1        L1 entry read
+    +2        about to read the L2 entry
+    +3        L2 entry read
+    +4        about to read the L3 entry
+    +5        mapped (valid block or page)
+If 50 is missing the block never ran; if 54 is present and 55 is not, the
+very first table read through the live TTBR1 faults.
 
 diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
 --- a/osfmk/arm64/arm_vm_init.c
 +++ b/osfmk/arm64/arm_vm_init.c
-@@ -2309,5 +2309,51 @@
+@@ -2309,5 +2309,52 @@
  	sweet_early_mark(41, "ttbr0 switch deferred");
 +	{
-+		pmap_paddr_t ram_lo = gPhysBase;
-+		pmap_paddr_t ram_hi = gPhysBase + memory_size;
 +		tt_entry_t  *ttbs[2];
 +		vm_offset_t  vas[2];
-+		int t, v;
++		int t, v, base;
 +
 +		ttbs[0] = cpu_tte;
 +		ttbs[1] = boot_tte;
 +		vas[0] = (vm_offset_t)(uintptr_t)&arm_vm_init;
 +		vas[1] = (vm_offset_t)(uintptr_t)&cpu_ttep;
 +
++		sweet_early_mark(50, "pt walk probe entered");
++
 +		for (t = 0; t < 2; t++) {
 +			for (v = 0; v < 2; v++) {
-+				tt_entry_t *l1 = ttbs[t] + L1_TABLE_INDEX(vas[v]);
-+				tt_entry_t  e = *l1;
-+				int res;
++				tt_entry_t *l1;
++				tt_entry_t e, e2;
 +
-+				if ((e & ARM_TTE_VALID) == 0) {
-+					res = 1;
-+				} else if ((e & ARM_TTE_TYPE_MASK) == ARM_TTE_TYPE_BLOCK) {
-+					res = 0;
-+				} else if (((e & ARM_TTE_TABLE_MASK) < ram_lo) ||
-+				    ((e & ARM_TTE_TABLE_MASK) >= ram_hi)) {
-+					res = 4;
-+				} else {
++				base = 54 + (t * 2 + v) * 8;
++				sweet_early_mark(base, "L1 read");
++				l1 = ttbs[t] + L1_TABLE_INDEX(vas[v]);
++				e = *l1;
++				sweet_early_mark(base + 1, "L1 ok");
++
++				if ((e & ARM_TTE_VALID) != 0 &&
++				    (e & ARM_TTE_TYPE_MASK) != ARM_TTE_TYPE_BLOCK) {
 +					tt_entry_t *l2 = L2_TABLE_VA(l1);
-+					tt_entry_t  e2 = l2[L2_TABLE_INDEX(vas[v])];
 +
-+					if ((e2 & ARM_TTE_VALID) == 0) {
-+						res = 2;
-+					} else if ((e2 & ARM_TTE_TYPE_MASK) == ARM_TTE_TYPE_BLOCK) {
-+						res = 0;
-+					} else if (((e2 & ARM_TTE_TABLE_MASK) < ram_lo) ||
-+					    ((e2 & ARM_TTE_TABLE_MASK) >= ram_hi)) {
-+						res = 4;
-+					} else {
++					sweet_early_mark(base + 2, "L2 read");
++					e2 = l2[L2_TABLE_INDEX(vas[v])];
++					sweet_early_mark(base + 3, "L2 ok");
++					if ((e2 & ARM_TTE_VALID) != 0 &&
++					    (e2 & ARM_TTE_TYPE_MASK) != ARM_TTE_TYPE_BLOCK) {
 +						pt_entry_t *l3 = L3_TABLE_VA(l2 + L2_TABLE_INDEX(vas[v]));
 +
-+						res = (l3[L3_TABLE_INDEX(vas[v])] != ARM_PTE_EMPTY) ? 0 : 3;
++						sweet_early_mark(base + 4, "L3 read");
++						if (l3[L3_TABLE_INDEX(vas[v])] != ARM_PTE_EMPTY) {
++							sweet_early_mark(base + 5, "mapped");
++						}
++					} else if ((e2 & ARM_TTE_VALID) != 0) {
++						sweet_early_mark(base + 5, "mapped");
 +					}
++				} else if ((e & ARM_TTE_VALID) != 0) {
++					sweet_early_mark(base + 5, "mapped");
 +				}
-+				sweet_early_mark(50 + (t * 2 + v) * 4 + res, "pt walk probe");
 +			}
 +		}
 +	}

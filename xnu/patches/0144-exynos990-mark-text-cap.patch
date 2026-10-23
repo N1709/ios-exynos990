@@ -1,0 +1,18 @@
+Subject: [PATCH] exynos990: stop the mark text from overwriting the stage bytes
+
+sweet_early_mark() appends text at the start of the mark page and, since
+0139, writes one byte per stage at +0x800.  The text cap was the whole
+page (4096), so after about forty marks the text ran over the stage bytes
+and erased marks that had just been written - a silent instrument failure
+that looks exactly like a kernel that stopped earlier than it did.
+
+Cap the text at 0x800 and leave the stage area alone.
+
+diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
+--- a/osfmk/arm64/sweet_early.c
++++ b/osfmk/arm64/sweet_early.c
+@@ -66,3 +66,3 @@
+ #define SWEET_MARK_BASE ((uintptr_t)&intstack_low_guard)
+-#define SWEET_MARK_CAP  4096u
++#define SWEET_MARK_CAP  0x800u	/* text stops before the stage bytes */
+ 
