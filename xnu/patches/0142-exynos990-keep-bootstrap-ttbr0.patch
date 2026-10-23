@@ -16,7 +16,7 @@ problem is elsewhere in that window.
 diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
 --- a/osfmk/arm64/arm_vm_init.c
 +++ b/osfmk/arm64/arm_vm_init.c
-@@ -2316,7 +2316,9 @@
+@@ -2316,4 +2316,6 @@
 -	set_mmu_ttb(invalid_ttep & TTBR_BADDR_MASK);
 +	/* bring-up: the switch is deferred until the tables are proven */
 +	if (0)
