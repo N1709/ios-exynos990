@@ -78,13 +78,19 @@ echo "== 5. check the loader against this kernel"
 tools/exynos990-verify-kernel.py "$kernel" \
 	--payload "$outdir/$model.payload" --defines "$LOADER_DEFINES"
 
+echo "== 6. xnu.img and xnu-kernel.zip"
+python3 tools/exynos990-kernel-package.py "$outdir/boot-$model.img" "$model"
+
 echo
 echo "boot image : $outdir/boot-$model.img"
 sha256sum "$outdir/boot-$model.img"
+echo "flashable  : out/xnu.img  out/xnu-kernel.zip"
+sha256sum out/xnu.img out/xnu-kernel.zip
 echo
-echo "flash it to the 'boot' partition (backup first):"
-echo "  adb push $outdir/boot-$model.img /tmp/boot.img"
-echo "  adb shell dd if=/tmp/boot.img of=/dev/block/by-name/boot bs=4M conv=fsync"
+echo "flash it (backup first) - from TWRP, either"
+echo "  install out/xnu-kernel.zip as a zip, or"
+echo "  adb push out/xnu.img /tmp/xnu.img"
+echo "  adb shell dd if=/tmp/xnu.img of=/dev/block/by-name/boot bs=4M conv=fsync"
 echo
 echo "collect the board facts while the phone is in TWRP:"
 echo "  adb push tools/exynos990-collect.sh /tmp/ && adb shell sh /tmp/exynos990-collect.sh"

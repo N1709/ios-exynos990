@@ -241,6 +241,16 @@ The guard moved down by 0x20000, so `XMARK_PHYS` in the loader is now
 `0x89248c000`; the boot image in `out/exynos990/boot-z3s.img` is built from
 this kernel.  Next: boot it and read the klog + marks.
 
+The page moves whenever the kernel image changes size (the fine marks in
+0138 moved it to `__TEXT + 0x148c000` = `0x892490000`), so the loader no
+longer carries the address: `exynos990-make-boot.sh` asks
+`exynos990-verify-kernel.py --print-defines` for `XMARK_PHYS` and
+`PT_KVA_OFF`, compiles the loader with them (`-D`, `LOADER_DEFINES`), and
+fails the build if the finished pair disagrees with the kernel.  Same guard
+for flashing: the build now leaves `out/xnu.img` and `out/xnu-kernel.zip`
+(a boot-image copy plus a shell update-binary that writes only `boot` and
+refuses a device whose `ro.product.device` is not `z3s`).
+
 **XNU runs: the relink was the whole silence (2026-10-23, phone).**  The
 first boot of the relinked kernel left `dmesg-ramoops-0` readable and the
 loader printed the previous run's marks:
