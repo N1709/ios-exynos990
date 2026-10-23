@@ -619,3 +619,43 @@ differ while the numeric values (`0xc5183a`, `0x8a080000`) are intact.  The
 next boot's `mkhex` line will show whether the mark page (a different
 physical page) shows the same damage, which decides between a zone-level
 problem and something that touches the dump page after it is written.
+
+## 2026-10-23: the TTBR0 switch is the last thing before the wall
+
+Marks 38/39/41 are now all set on the phone (`1..7, 20..30, 31, 33..37, 38,
+39, 41`); mark 32 is absent because the `KERNEL_INTEGRITY_KTRR` block is not
+compiled.  Mark 10 is still missing and the only code between 41 and 10 is
+
+    set_mmu_ttb(invalid_ttep & TTBR_BADDR_MASK);
+    flush_mmu_tlb();            <- the wall
+    sweet_early_mark(10, ...);  <- never runs
+
+No `FAULT` byte is left either, so the first store after the flush does not
+come back through the early exception handler.  Patch 0142 keeps the
+bootstrap TTBR0 and labels mark 10 honestly; if the kernel then reaches
+`pmap_bootstrap`, the switch (i.e. what `cpu_ttep` maps for the kernel image)
+is the culprit, and that is what the next marks will show.
+
+## 2026-10-23: the loader cannot own the DPU SYSMMU
+
+The DPU's DMA address registers are 32-bit while DRAM starts at `0x880000000`,
+so the display path has to be translated.  A register-by-register probe of the
+DPU SYSMMU says:
+
+    0x19100000 CTRL   = 0x4      readable
+    0x19100004 CFG    = 0x0      readable
+    0x19100008 STATUS = 0x0      readable
+    0x1910000C PT_BASE_PPN       synchronous external abort (ESR 0x96000010)
+
+so the page-table base is behind a firewall (TrustZone owns it) and a
+bare-metal loader cannot install a table of its own.  Enabling the block and
+reusing whatever table the bootloader left would still not help: we cannot
+put our pixels at the physical address that table maps, because we cannot
+read the table to learn it.  Conclusion for this port: the loader-side
+framebuffer console is not reachable; the display has to be brought up inside
+XNU, where the SYSMMU and the power domains are owned by drivers, not by a
+boot stub.  The DSIM link work is still useful there: PLL p=2/m=178/s=2, the
+PHY reset order (assert *after* the DSIM reset, not before), and the DECON
+commit order (request then trigger, never poll before the trigger) are all
+confirmed on the phone.
+
