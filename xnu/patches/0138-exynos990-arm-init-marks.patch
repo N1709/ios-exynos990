@@ -1,0 +1,96 @@
+Subject: [PATCH] exynos990: marks between PE_init_platform and the topology
+ parse, and record a synchronous fault in the mark page
+
+arm_init's mark 2 ("PE_init_platform done") is the last one the phone
+shows after the relink, and mark 3 ("ml_parse_cpu_topology done") never
+appears, so the kernel dies somewhere in the block in between: the
+Apple register/wfe setup, the /chosen lookup that DEVELOPMENT builds do,
+or the page-size selection.  Add a mark after each of those calls so the
+next run names the one that faults.
+
+A mark only says "the previous call returned", so also record the fault
+itself: sleh_synchronous() is the first C code the EL1 synchronous
+vector reaches, and it has the ESR and FAR in hand.  Writing them into
+the same mark page costs two stores and turns "the marks stop here" into
+"it took a data abort on this address".
+
+diff --git a/osfmk/arm/arm_init.c b/osfmk/arm/arm_init.c
+--- a/osfmk/arm/arm_init.c
++++ b/osfmk/arm/arm_init.c
+@@ -367,10 +367,15 @@
+ #if __arm64__
+ 	configure_timer_apple_regs();
++	sweet_early_mark(20, "configure_timer_apple_regs done");
+ 	wfe_timeout_configure();
++	sweet_early_mark(21, "wfe_timeout_configure done");
+ 	wfe_timeout_init();
++	sweet_early_mark(22, "wfe_timeout_init done");
+ 
+ 	configure_misc_apple_boot_args();
++	sweet_early_mark(23, "configure_misc_apple_boot_args done");
+ 	configure_misc_apple_regs();
++	sweet_early_mark(24, "configure_misc_apple_regs done");
+ 
+ #if (DEVELOPMENT || DEBUG)
+ 	unsigned long const *platform_stall_ptr = NULL;
+@@ -385,6 +391,7 @@
+ 	}
+ 
+ 	platform_stall_panic_or_spin(PLATFORM_STALL_XNU_LOCATION_ARM_INIT);
++	sweet_early_mark(25, "platform_stall done");
+ 
+ 	chosen = NULL; // Force a re-lookup later on since VM addresses are not final at this point
+ 	dt_entry_size = 0;
+@@ -420,6 +427,8 @@
+ 	}
+ #endif
+ 
++	sweet_early_mark(26, "page size selected");
++
+ 	ml_parse_cpu_topology();
+ 	sweet_early_mark(3, "ml_parse_cpu_topology done");
+ 
+diff --git a/osfmk/arm64/sleh.c b/osfmk/arm64/sleh.c
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -602,6 +602,13 @@
+ void
+ sleh_synchronous(arm_context_t *context, uint32_t esr, vm_offset_t far)
+ {
++#if defined(EXYNOS990)
++	/* Temporary: leave ESR/FAR where the loader can read them.  A mark
++	 * alone only says the previous call returned; this says why the
++	 * kernel stopped. */
++	extern void sweet_early_fault(uint64_t, uint64_t);
++	sweet_early_fault((uint64_t)esr, (uint64_t)far);
++#endif
+ 	esr_exception_class_t  class   = ESR_EC(esr);
+ 	arm_saved_state_t    * state   = &context->ss;
+ 	thread_t               thread  = current_thread();
+diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
+--- a/osfmk/arm64/sweet_early.c
++++ b/osfmk/arm64/sweet_early.c
+@@ -118,6 +118,23 @@
+ 	__asm__ volatile("dsb sy" ::: "memory");
+ }
+ 
++void
++sweet_early_fault(uint64_t esr, uint64_t far)
++{
++	uintptr_t a, e;
++
++	sweet_mark_puts("FAULT esr=");
++	sweet_mark_hex(esr);
++	sweet_mark_puts(" far=");
++	sweet_mark_hex(far);
++	sweet_mark_puts("\n");
++	a = (uintptr_t)SWEET_MARK_BASE;
++	e = a + ((sweet_mark_off + 63u) & ~(uintptr_t)63);
++	for (; a < e; a += 64)
++		__asm__ volatile("dc civac, %0" :: "r"(a) : "memory");
++	__asm__ volatile("dsb sy" ::: "memory");
++}
++
+ void
+ sweet_early_panic(const char *fmt, va_list *args)
+ {

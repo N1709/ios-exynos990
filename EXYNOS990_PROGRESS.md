@@ -241,6 +241,29 @@ The guard moved down by 0x20000, so `XMARK_PHYS` in the loader is now
 `0x89248c000`; the boot image in `out/exynos990/boot-z3s.img` is built from
 this kernel.  Next: boot it and read the klog + marks.
 
+**XNU runs: the relink was the whole silence (2026-10-23, phone).**  The
+first boot of the relinked kernel left `dmesg-ramoops-0` readable and the
+loader printed the previous run's marks:
+
+    kernel marks:
+    XMARK v1
+    stage 0x...0001: arm_init entered (MMU on)
+    stage 0x...0002: PE_init_platform done
+
+so the MMU enable, the `ret` into `arm_init`, the VBAR and the mark page
+all work now; the CPU no longer spins in the vector.  It stops between
+PE_init_platform and `ml_parse_cpu_topology()` (mark 3 never appears), in
+the block that does `configure_timer_apple_regs`, `wfe_timeout_*`,
+`configure_misc_apple_*`, the DEVELOPMENT `/chosen` lookup and the
+page-size selection.  `0138` puts a mark after each of those calls and
+records ESR/FAR in the page from `sleh_synchronous`, so the next run
+either names the call that faults or shows the fault address.
+
+Note that the ring record is useful only when XNU never reaches
+`serial_init`: then the loader's own text survives intact, which is what
+happened here (`JUMP TO XNU` is the last line).  `prev_ring_park()` in
+the loader copies the zone to log_kernel for the case where it does not.
+
 ## Next action (scope: E3–E5, E6 deferred)
 
 E1 is done on the phone and E2 is one boot away from being either proven or
