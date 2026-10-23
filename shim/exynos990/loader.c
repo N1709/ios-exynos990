@@ -160,6 +160,40 @@ static void klog_dump(void)
 	__asm__ volatile("dsb sy" ::: "memory");
 }
 
+/* ---- previous kernel's ring, parked where TWRP can read it --------------
+ * The pstore dump zone above is the only sink for XNU's own text, but a
+ * record whose persistent_ram header the kernel's writer left in an
+ * unexpected state is dropped by ramoops and the file disappears from
+ * /sys/fs/pstore (seen 2026-10-23: pmsg-ramoops-0 present,
+ * dmesg-ramoops-0 gone).  Copy the zone, header and all, into Samsung's
+ * 2 MiB log_kernel buffer - the one /proc/last_kmsg exposes - well past
+ * the few KiB the running recovery kernel writes into it, so one more
+ * loader run is enough to recover a boot that left no readable record.
+ *
+ * log_kernel is 0xFD910000..0xFDB10000 (debug-snapshot-def.h:56,85,
+ * exynos9830-rmem.dtsi:79-81).  The parked copy is found by the marker
+ * below; tools/exynos990-carve-ring.py turns it back into text.
+ */
+#define PREV_SRC	0xeb308000u
+#define PREV_SIZE	0x4000u
+#define PREV_DST	(0xfd910000u + 0x180000u)
+#define PREV_MARK	"PREVRING1"
+
+static void prev_ring_park(void)
+{
+	volatile uint8_t *src = (volatile uint8_t *)(uintptr_t)PREV_SRC;
+	volatile uint8_t *dst = (volatile uint8_t *)(uintptr_t)PREV_DST;
+	uint32_t n = PREV_SIZE;
+
+	for (const char *s = PREV_MARK; *s; s++)
+		*dst++ = (uint8_t)*s;
+	for (unsigned i = 0; i < 4; i++)
+		*dst++ = (uint8_t)(n >> (8 * i));
+	for (uint32_t i = 0; i < n; i++)
+		dst[i] = src[i];
+	__asm__ volatile("dsb sy" ::: "memory");
+}
+
 /* ---- progress marks ----
  * The loader now runs (sboot accepts the v2 image) but hangs somewhere
  * before klog_dump().  Each mark overwrites the ramoops dump zone with a
@@ -478,6 +512,7 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 	mark('0');
 	con_init();
 	mark('1');
+	prev_ring_park();	/* keep the last kernel's ring before we reuse it */
 	klog_init();
 	mark('2');
 	out("\nEXYNOS990 LOADER BEGIN (ios-exynos990 exynos990 port)\n");
