@@ -24,6 +24,7 @@
 #include "console.h"
 #include "ufs_probe.h"
 #include "decon_probe.h"
+#include "dsim_init.h"
 
 /* ---- payload container (tools/mkpayload.py, "SWEETXNU" v1) ---- */
 struct payload_seg {
@@ -778,6 +779,11 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 	/* First visible sign of life, milliseconds after entry: if this band
 	 * never appears the loader did not execute at all. */
 	paint_band(&fb, 0xff00ff00u);
+
+	/* TEMPORARY: reopen the DSI link, then draw into it.  The ring is
+	 * rewritten after each half so a stall still leaves a readable log. */
+	dsim_bringup(kv, out);
+	klog_dump();
 
 	/* TEMPORARY: one test frame with DPP0 -> DECON window 5, colour bars
 	 * at 0x894000000.  The DSIM link is still down, so the frame cannot
