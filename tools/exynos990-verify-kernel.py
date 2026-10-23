@@ -26,6 +26,7 @@ offsets the loader hard-codes (mark page and bootstrap pagetables), then exits
 non-zero when the kernel is outside its own TTBR1 window.
 """
 import argparse
+import re
 import struct
 import sys
 
@@ -41,6 +42,8 @@ TTBR1_START = (1 << 64) - TTBR1_WINDOW
 # Offsets the loader depends on, relative to __TEXT (the Mach header).
 XMARK_OFF = 0x14a8000     # _intstack_low_guard
 PT_OFF = 0x172000         # _bootstrap_pagetables
+
+PAYLOAD_MAGIC = b'SWEETXNU'
 
 
 def parse(path):
@@ -77,6 +80,20 @@ def parse(path):
     return buf, segs, syms, entry
 
 
+def loader_constants(path):
+    """The two absolute values the loader must agree with this kernel about."""
+    out = {}
+    try:
+        src = open(path).read()
+    except OSError:
+        return out
+    for name in ('XMARK_PHYS', 'PT_KVA_OFF'):
+        m = re.search(r'#define\s+' + name + r'\s+\(?\s*(0x[0-9a-fA-F]+)', src)
+        if m:
+            out[name] = int(m.group(1), 16)
+    return out
+
+
 def tcr_fields(v):
     return dict(t0sz=v & 0x3f, tg0=(v >> 14) & 3, t1sz=(v >> 16) & 0x3f,
                 tg1=(v >> 30) & 3, ips=(v >> 32) & 7)
@@ -85,14 +102,38 @@ def tcr_fields(v):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('kernel')
-    ap.add_argument('--phys-base', type=lambda s: int(s, 0), default=0x891004000,
-                    help='physical address of __TEXT (payload phys_base anchor)')
+    ap.add_argument('--phys-base', type=lambda s: int(s, 0), default=None,
+                    help='physical address of __TEXT (default: from --payload)')
+    ap.add_argument('--payload', default=None,
+                    help='SWEETXNU payload built from this kernel: takes the '
+                         'physical placement from it instead of guessing')
+    ap.add_argument('--loader', default='shim/exynos990/loader.c',
+                    help='loader source whose XMARK_PHYS/PT_KVA_OFF are checked')
     a = ap.parse_args()
 
     buf, segs, syms, entry = parse(a.kernel)
     text = next(s for s in segs if s['name'] == '__TEXT')
     base = text['vmaddr']
     ok = base >= TTBR1_START
+
+    phys_base = a.phys_base
+    if a.payload:
+        hdr = open(a.payload, 'rb').read(0x48)
+        if hdr[:8] != PAYLOAD_MAGIC:
+            sys.exit(f'{a.payload}: not a {PAYLOAD_MAGIC.decode()} payload')
+        virt, = struct.unpack_from('<Q', hdr, 0x10)
+        pbase, = struct.unpack_from('<Q', hdr, 0x30 + 8)
+        phys_base = pbase + (base - virt)
+        print(f'payload                virt_base {virt:#x} phys_base {pbase:#x} '
+              f'-> __TEXT PA {phys_base:#x}')
+        if virt != base & ~(0x2000000 - 1):
+            print(f'  warning: payload was built from a different kernel '
+                  f'(expected virt_base {base & ~(0x2000000 - 1):#x})')
+    if phys_base is None:
+        phys_base = 0x891004000
+        print('note: no --payload/--phys-base, assuming __TEXT at '
+              f'{phys_base:#x}')
+    a.phys_base = phys_base
 
     print(f'__TEXT                 {base:#018x}')
     print(f'TTBR1 window (4 KiB)   {TTBR1_START:#018x} .. 0xffffffffffffffff')
@@ -119,7 +160,7 @@ def main():
                        ('_bootstrap_pagetables', PT_OFF)):
         if name in syms:
             got = syms[name] - base
-            flag = 'ok' if got == want else f'CHANGED (loader uses +{want:#x})'
+            flag = 'ok' if got == want else f'CHANGED (was +{want:#x})'
             print(f'{name:22} +{got:#x} -> {syms[name]:#018x} '
                   f'(PA {a.phys_base + got:#x}) {flag}')
     if '_intstack_top' in syms and '_intstack_low_guard' in syms:
@@ -127,7 +168,24 @@ def main():
         print(f'_intstack_top gap      {gap:#x} (loader reads the stack sentinel '
               f'at guard + 0x{gap - 0x10:x})')
 
-    return 0 if ok else 1
+    stale = []
+    consts = loader_constants(a.loader)
+    if '_intstack_low_guard' in syms and consts.get('XMARK_PHYS') is not None:
+        want = a.phys_base + syms['_intstack_low_guard'] - base
+        got = consts['XMARK_PHYS']
+        print(f'loader XMARK_PHYS      {got:#x} (must be {want:#x}) '
+              f'{"ok" if got == want else "STALE"}')
+        if got != want:
+            stale.append('XMARK_PHYS')
+    if '_bootstrap_pagetables' in syms and consts.get('PT_KVA_OFF') is not None:
+        want = syms['_bootstrap_pagetables'] - base
+        got = consts['PT_KVA_OFF']
+        print(f'loader PT_KVA_OFF      +{got:#x} (must be +{want:#x}) '
+              f'{"ok" if got == want else "STALE"}')
+        if got != want:
+            stale.append('PT_KVA_OFF')
+
+    return 0 if ok and not stale else 1
 
 
 if __name__ == '__main__':
