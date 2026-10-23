@@ -776,6 +776,7 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 	mark('8');
 	struct decon_fb fb;
 	decon_probe(kv, out, &fb);
+	smmu_probe(kv, out);
 	/* First visible sign of life, milliseconds after entry: if this band
 	 * never appears the loader did not execute at all. */
 	paint_band(&fb, 0xff00ff00u);
@@ -790,8 +791,14 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 	 * reach the panel yet; this checks the DECON half on its own (shadow
 	 * commit, trigger, DMA address) and the log is rewritten right after
 	 * in case the trigger stalls the bus. */
-	display_test(0x894000000ull, 1440, 3200, kv, out);
-	klog_dump();
+	/* The DPP/DECON test frame is parked until the DSC encoder and the
+	 * PPS packet are programmed: with a buffer address the DPU cannot
+	 * reach it only exercises the failure path, and the shadow commit it
+	 * proved is already recorded in the notes. */
+	if (0) {
+		display_test(0x894000000ull, 1440, 3200, kv, out);
+		klog_dump();
+	}
 
 	/* No bulk wipe.  sboot leaves the previous OS's data in RAM, but the
 	 * VM zeroes every page it hands out and the kernel image, BSS and

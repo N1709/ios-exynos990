@@ -270,9 +270,28 @@ int display_test(uintptr_t fb_pa, unsigned w, unsigned h,
 	kv("dma0_y", rd(IDMA(0) + IDMA_IN_BASE_ADDR_Y8));
 	kv("dma0_sz", rd(IDMA(0) + IDMA_IMG_SIZE));
 	kv("dma0_stride", rd(IDMA(0) + IDMA_SRC_STRIDE_1));
-	kv("smmu_1910", rd(0x19100000));
-	kv("smmu_pt", rd(0x1910000c));
-	kv("smmu_190a", rd(0x190a0000));
 	out("\n");
 	return 0;
+}
+/* SYSMMU accessibility probe (step 2a of the display plan).  The DPU's DMA
+ * address registers are 32-bit while DRAM starts at 0x880000000, so the
+ * display path must go through the SYSMMU; but an earlier read of
+ * 0x1910000C raised a data abort (FAR=0x1910000c, ESR=0x96000010) while
+ * 0x19100000 read back 0x4.  Read the block one register at a time, each
+ * preceded by its own flushed marker, so the next log says exactly which
+ * registers are reachable and which are not.
+ * Offsets: drivers/iommu/exynos-iommu.h (CTRL 0x000, CFG 0x004,
+ * STATUS 0x008, PT_BASE_PPN 0x00C, VERSION 0x034).
+ */
+void smmu_probe(void (*kv)(const char *, uint64_t), void (*out)(const char *))
+{
+	out("SYSMMU probe\n");
+	out("s0\n"); kv("dpu0_ctrl", rd(SYSMMU_DPU0 + 0x000));
+	out("s1\n"); kv("dpu0_cfg", rd(SYSMMU_DPU0 + 0x004));
+	out("s2\n"); kv("dpu0_status", rd(SYSMMU_DPU0 + 0x008));
+	out("s3\n"); kv("dpu0_pt", rd(SYSMMU_DPU0 + 0x00c));
+	out("s4\n"); kv("dpu0_ver", rd(SYSMMU_DPU0 + 0x034));
+	out("s5\n"); kv("dpu1_ctrl", rd(SYSMMU_DPU1 + 0x000));
+	out("s6\n"); kv("dpu1_ver", rd(SYSMMU_DPU1 + 0x034));
+	out("\n");
 }

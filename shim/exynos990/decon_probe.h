@@ -18,6 +18,10 @@ struct decon_fb {
 void decon_probe(void (*kv)(const char *, uint64_t), void (*out)(const char *),
 		 struct decon_fb *fb);
 
+/* TEMPORARY: is the DPU SYSMMU reachable at all?  Reads one register per
+ * flushed marker so a fault names it. */
+void smmu_probe(void (*kv)(const char *, uint64_t), void (*out)(const char *));
+
 /* TEMPORARY: colour bars into fb_pa, point DPP0 at them, one DECON trigger. */
 int display_test(uintptr_t fb_pa, unsigned w, unsigned h,
 		 void (*kv)(const char *, uint64_t), void (*out)(const char *));
