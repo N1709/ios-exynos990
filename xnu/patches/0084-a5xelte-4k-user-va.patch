@@ -2,13 +2,12 @@ diff --git a/osfmk/mach/arm/vm_param.h b/osfmk/mach/arm/vm_param.h
 index c013288d4..f5d41d46a 100644
 --- a/osfmk/mach/arm/vm_param.h
 +++ b/osfmk/mach/arm/vm_param.h
-@@ -133,7 +133,8 @@ extern int PAGE_SHIFT_CONST;
+@@ -133,7 +133,7 @@ extern int PAGE_SHIFT_CONST;
  
  /* system-wide values */
  #define MACH_VM_MIN_ADDRESS_RAW 0x0ULL
 -#if defined(XNU_PLATFORM_MacOSX) || defined(XNU_PLATFORM_DriverKit)
-+#if (defined(XNU_PLATFORM_MacOSX) || defined(XNU_PLATFORM_DriverKit)) && \
-+    !defined(A5XELTE) && !defined(EXYNOS990)
++#if (defined(XNU_PLATFORM_MacOSX) || defined(XNU_PLATFORM_DriverKit)) && !defined(A5XELTE)
  #define MACH_VM_MAX_ADDRESS_RAW 0x00007FFFFE000000ULL
  #else
  #define MACH_VM_MAX_ADDRESS_RAW 0x0000000FC0000000ULL
