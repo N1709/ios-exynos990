@@ -10,6 +10,10 @@ cd "$(dirname "$0")"
 CC=aarch64-linux-gnu-gcc
 OBJCOPY=aarch64-linux-gnu-objcopy
 CFLAGS="-O2 -ffreestanding -nostdlib -fno-pic -mgeneral-regs-only -mstrict-align -fno-stack-protector -fno-tree-loop-distribute-patterns -march=armv8-a -Wall -Wextra -Werror"
+# XMARK_PHYS/PT_KVA_OFF follow the kernel image: exynos990-make-boot.sh passes
+# them as -D... so a rebuild can never leave the loader pointing at the wrong
+# page after the kernel changes size.
+CFLAGS="$CFLAGS ${LOADER_DEFINES:-}"
 if [ $# -gt 2 ]; then
 	echo "usage: build.sh [PAYLOAD.bin [OUT.boot.img]]" >&2
 	exit 1

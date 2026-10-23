@@ -288,8 +288,14 @@ static void copy(uintptr_t dst, uintptr_t src, uint64_t n)
  * PA (0x89248c000 for this payload); the KVA depends on the link address,
  * which is the compact 39-bit layout (0xfffffff007004000), so the walk uses
  * the payload's own virt_base instead of a constant.  Print it and clear it
- * for the next kernel.  Remove with sweet_early_mark (patch 0127). */
+ * for the next kernel.  Remove with sweet_early_mark (patch 0127).
+ *
+ * The page moves whenever the kernel image changes size, so the value is
+ * passed by exynos990-make-boot.sh (-DXMARK_PHYS=...), which derives it from
+ * the kernel it just packed; the literal below is only a fallback. */
+#ifndef XMARK_PHYS
 #define XMARK_PHYS 0x89248c000ull
+#endif
 
 static uint32_t g_run;	/* loader run counter, rides in the mark page */
 
@@ -322,7 +328,9 @@ static void zero(uintptr_t dst, uint64_t n)
  * __TEXT: reading 0x891004000 only showed the Mach-O header and __TEXT
  * code (every page then looks like a table with random descriptors).
  * Remove with the rest of the early diagnostics. */
+#ifndef PT_KVA_OFF
 #define PT_KVA_OFF	0x172000ull	/* _bootstrap_pagetables - __TEXT start */
+#endif
 #define PT_PAGES	4
 
 static uint64_t pte(uint64_t pa)

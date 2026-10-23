@@ -80,18 +80,23 @@ def parse(path):
     return buf, segs, syms, entry
 
 
-def loader_constants(path):
-    """The two absolute values the loader must agree with this kernel about."""
+def constants_from_text(text):
+    """XMARK_PHYS/PT_KVA_OFF from a #define or from -D flags."""
     out = {}
-    try:
-        src = open(path).read()
-    except OSError:
-        return out
     for name in ('XMARK_PHYS', 'PT_KVA_OFF'):
-        m = re.search(r'#define\s+' + name + r'\s+\(?\s*(0x[0-9a-fA-F]+)', src)
+        m = re.search(r'(?:#define\s+|(?:^|\s)-D)' + name +
+                      r'\s*=?\s*\(?\s*(0x[0-9a-fA-F]+)', text)
         if m:
             out[name] = int(m.group(1), 16)
     return out
+
+
+def loader_constants(path):
+    """The two absolute values the loader must agree with this kernel about."""
+    try:
+        return constants_from_text(open(path).read())
+    except OSError:
+        return {}
 
 
 def tcr_fields(v):
@@ -109,6 +114,11 @@ def main():
                          'physical placement from it instead of guessing')
     ap.add_argument('--loader', default='shim/exynos990/loader.c',
                     help='loader source whose XMARK_PHYS/PT_KVA_OFF are checked')
+    ap.add_argument('--defines', default=None,
+                    help='the -D flags the loader was really compiled with; '
+                         'checked instead of the literals in the source')
+    ap.add_argument('--print-defines', action='store_true',
+                    help='print the -D flags this kernel needs and exit')
     a = ap.parse_args()
 
     buf, segs, syms, entry = parse(a.kernel)
@@ -168,8 +178,18 @@ def main():
         print(f'_intstack_top gap      {gap:#x} (loader reads the stack sentinel '
               f'at guard + 0x{gap - 0x10:x})')
 
+    if a.print_defines:
+        want = {}
+        if '_intstack_low_guard' in syms:
+            want['XMARK_PHYS'] = a.phys_base + syms['_intstack_low_guard'] - base
+        if '_bootstrap_pagetables' in syms:
+            want['PT_KVA_OFF'] = syms['_bootstrap_pagetables'] - base
+        print(' '.join(f'-D{k}=0x{v:x}ull' for k, v in want.items()))
+        return 0
+
     stale = []
-    consts = loader_constants(a.loader)
+    consts = (constants_from_text(a.defines) if a.defines
+              else loader_constants(a.loader))
     if '_intstack_low_guard' in syms and consts.get('XMARK_PHYS') is not None:
         want = a.phys_base + syms['_intstack_low_guard'] - base
         got = consts['XMARK_PHYS']

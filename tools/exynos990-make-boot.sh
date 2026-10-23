@@ -54,6 +54,13 @@ python3 tools/mkpayload.py "$kernel" "$outdir/$model.adt" "$outdir/$model.payloa
 	--cmdline "debug=0xc serial=3 cpus=1 keepsyms=1"
 
 echo "== 3. loader"
+# The mark page and the bootstrap page tables are kernel symbols, so their
+# physical address moves whenever the kernel image changes size.  Derive the
+# two constants from this kernel instead of hard-coding them in loader.c.
+LOADER_DEFINES=$(tools/exynos990-verify-kernel.py "$kernel" \
+	--payload "$outdir/$model.payload" --print-defines | tail -1)
+export LOADER_DEFINES
+echo "  $LOADER_DEFINES"
 bash shim/exynos990/build.sh
 cp shim/exynos990/out/Image "$outdir/loader-$model.img"
 
@@ -66,6 +73,10 @@ python3 tools/mkboot_exynos990.py --kernel "$outdir/loader-$model.img" \
 	--ramdisk "$outdir/$model.payload" --out "$outdir/boot-$model.img" \
 	--page-size 2048 --tags-addr 0x10000100 \
 	--dtb firmware/z3s-dtb.bin --dtb-addr 0x10000000
+
+echo "== 5. check the loader against this kernel"
+tools/exynos990-verify-kernel.py "$kernel" \
+	--payload "$outdir/$model.payload" --defines "$LOADER_DEFINES"
 
 echo
 echo "boot image : $outdir/boot-$model.img"
