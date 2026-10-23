@@ -1,0 +1,60 @@
+Subject: [PATCH] exynos990: mark the early steps of arm_vm_init
+
+The stage bytes show that arm_init completes (marks 1-7, 20-30) and
+recall that mark 10 is written only after the final TTBR1 is live and
+the bootstrap TTBR0 has been dropped.  Nothing between mark 7 and mark
+10 is recorded, so the kernel dies somewhere in the first half of
+arm_vm_init: the size checks, the bootstrap page-table sizing, the
+early allocator, or arm_vm_physmap_init.  A panic() there has no console
+yet and merely spins, which looks exactly like the hang.
+
+Put a mark on each step so the next run names the failing call instead
+of guessing.
+
+diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -1893,5 +1893,6 @@
+ 	if (mem_size >= ((VM_MAX_KERNEL_ADDRESS - VM_MIN_KERNEL_ADDRESS) / 2)) {
+ 		panic("Unsupported memory configuration %lx", mem_size);
+ 	}
++	sweet_early_mark(31, "memory size accepted");
+ 
+ #if defined(ARM_LARGE_MEMORY)
+@@ -1961,6 +1962,7 @@
+ 	if (pages_used > BOOTSTRAP_TABLE_SIZE) {
+ 		panic("BOOTSTRAP_TABLE_SIZE too small for memory config");
+ 	}
++	sweet_early_mark(35, "bootstrap tables sized");
+ #endif
+ 
+ 	/*
+@@ -1975,5 +1977,6 @@
+ #if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
+ 	arm_replace_identity_map();
++	sweet_early_mark(32, "identity map replaced");
+ #endif
+ 
+ 	/* Initialize invalid tte page */
+@@ -1983,6 +1986,7 @@
+ 	invalid_tte = (tt_entry_t *)alloc_ptpage(TRUE);
+ 	invalid_ttep = kvtophys((vm_offset_t)invalid_tte);
+ 	bzero(invalid_tte, ARM_PGBYTES);
++	sweet_early_mark(33, "invalid tte page ready");
+ 
+ 	/*
+ 	 * Initialize l1 page table page
+@@ -1991,5 +1996,6 @@
+ 	cpu_ttep = kvtophys((vm_offset_t)cpu_tte);
+ 	bzero(cpu_tte, ARM_PGBYTES);
++	sweet_early_mark(34, "cpu tte page ready");
+ 	avail_end = gPhysBase + mem_size;
+ 	assert(!(avail_end & PAGE_MASK));
+ 
+@@ -2186,4 +2192,6 @@
++	sweet_early_mark(36, "arm_vm_physmap_init");
+ 	arm_vm_physmap_init(args);
++	sweet_early_mark(37, "physmap init done");
+ 	set_mmu_ttb_alternate(cpu_ttep & TTBR_BADDR_MASK);
+ 
+ 	ml_enable_monitor();
