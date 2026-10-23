@@ -88,15 +88,14 @@ int dsim_bringup(void (*kv)(const char *, uint64_t), void (*out)(const char *))
 
 	out("DSIM bring-up\n");
 
-	/* 1. Release the PHY isolation in the PMU (owner 0 = DSIM0). */
-	wr(PMU + 0x710, rd(PMU + 0x710) | 1u);
-	kv("iso", rd(PMU + 0x710));
+	/* The PMU isolation bit and the SYSREG reset are left alone: the
+	 * bootloader had to open them to show the logo, the previous attempt
+	 * died on the first PMU access (the log stopped right here), and the
+	 * PMU power domains on this chip are reached through an SMC anyway.
+	 * If the PHY below turns out to be held in reset, these come back. */
 
-	/* 2. Select DSIM0 on the shared PHY and assert its top reset. */
-	wr(DISP_SYSREG + 0x8, rd(DISP_SYSREG + 0x8) & ~((1u << 4) | 1u));
-	kv("sysreg", rd(DISP_SYSREG + 0x8));
-
-	/* 3. DSIM clock from OSC, then a full reset. */
+	/* 1. DSIM clock from OSC, then a full reset. */
+	out("d1 reset\n");
 	clk = rd(DSIM + R_CLK_CTRL) & ~(1u << 26);
 	wr(DSIM + R_CLK_CTRL, clk);
 	wr(DSIM + R_SWRST, 1);
@@ -114,6 +113,7 @@ int dsim_bringup(void (*kv)(const char *, uint64_t), void (*out)(const char *))
 	wr(DSIM + R_CLK_CTRL, clk);
 
 	/* 5. PHY analog defaults (dsim_reg.c:44-86). */
+	out("d2 phy\n");
 	wr(PHY + 0x00, 0x10);
 	wr(PHY + 0x04, 0x110);
 	wr(PHY + 0x08, 0x3223);
@@ -155,8 +155,9 @@ int dsim_bringup(void (*kv)(const char *, uint64_t), void (*out)(const char *))
 		wr(P_MD(n, 0x14), 0x0);
 	}
 
-	/* 8. PLL: p=2, m=178, s=2, k=0 (timing,pmsk of the S6E3HAB node!),
+	/* 8. PLL: p=2, m=178, s=2, k=0 (timing,pmsk of the S6E3HAB node),
 	 *    lock counter 500 * p, then enable and wait for lock. */
+	out("d3 pll\n");
 	wr(P_PLL_CON(1), 0x0);
 	wr(P_PLL_CON(0), 0x1202);
 	wr(P_PLL_CON(2), 0xb2);
@@ -172,6 +173,7 @@ int dsim_bringup(void (*kv)(const char *, uint64_t), void (*out)(const char *))
 	kv("pll", rd(P_PLL_STAT));
 
 	/* 9. Turn the lanes on and wait for PHY_READY on each. */
+	out("d4 lanes\n");
 	wr(P_MC_GNR0, 0xffffffffu);
 	if (poll_set(P_MC_GNR0, PHY_READY, 20000)) {
 		kv("mc_gnr", rd(P_MC_GNR0));
@@ -188,8 +190,7 @@ int dsim_bringup(void (*kv)(const char *, uint64_t), void (*out)(const char *))
 	}
 	kv("lanes", 0xf);
 
-	/* 10. Release the PHY reset and switch the word clock to the PLL. */
-	wr(DISP_SYSREG + 0x8, rd(DISP_SYSREG + 0x8) | 1u);
+	/* 10. Switch the word clock to the PLL. */
 	clk = rd(DSIM + R_CLK_CTRL) | (1u << 26);
 	wr(DSIM + R_CLK_CTRL, clk);
 
