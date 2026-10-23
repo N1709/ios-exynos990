@@ -1,0 +1,27 @@
+Subject: [PATCH] exynos990: keep the bootstrap TTBR0 while bringing the VM up
+
+Marks 38, 39 and 41 are all written, mark 10 is not, and the only code
+between them is set_mmu_ttb(invalid_ttep) followed by flush_mmu_tlb().
+After that flush the very next store (the mark byte itself) never
+returns, and no synchronous-exception byte is left either - so the first
+access after the flush either faults in a way the early handler cannot
+record, or points at tables the early walk cannot use.
+
+Leave the bootstrap TTBR0 in place for now and label mark 10 honestly.
+If the kernel then walks past it into pmap_bootstrap, the switch is the
+culprit and the mapping cpu_ttep installs for the kernel image needs to
+be understood before the switch comes back; if it still stops, the
+problem is elsewhere in that window.
+
+diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -2316,7 +2316,9 @@
+-	set_mmu_ttb(invalid_ttep & TTBR_BADDR_MASK);
++	/* bring-up: the switch is deferred until the tables are proven */
++	if (0)
++		set_mmu_ttb(invalid_ttep & TTBR_BADDR_MASK);
+ 
+ 	flush_mmu_tlb();
+-	sweet_early_mark(10, "TTBR0 off; TLB flushed");
++	sweet_early_mark(10, "TTBR0 kept; TLB flushed");
