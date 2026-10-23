@@ -1,0 +1,33 @@
+--- a/pexpert/arm/pe_serial.c
++++ b/pexpert/arm/pe_serial.c
+@@ -886,6 +886,30 @@
+ 	    SecureDTGetProperty(entry, "reg", (void const **)&reg, &size) != kSuccess || size < 16) {
++		/* No ADT node for this board: use the framebuffer the
++		 * bootloader already scans out, which the loader decoded from
++		 * the DECON window registers and passed in boot_args.Video.
++		 * The panel runs in command mode, so the controller keeps its
++		 * own copy of the frame: this buffer is the only one whose
++		 * contents reach the screen without reprogramming DECON. */
++		PE_Video video;
++
++		if (PE_current_console(&video) != 0 || !video.v_display ||
++		    !video.v_baseAddr || video.v_depth != 32 || !video.v_width ||
++		    !video.v_height || video.v_rowBytes < video.v_width * 4 ||
++		    (uint64_t)video.v_height * video.v_rowBytes > 64 * 1024 * 1024) {
++			return;
++		}
++		fbcon_width = video.v_width;
++		fbcon_height = video.v_height;
++		fbcon_stride = video.v_rowBytes;
++		sweet_early_mark(17, "fbcon config from boot_args.Video");
++		fbcon_base = (volatile uint32_t *)ml_io_map_wcomb(video.v_baseAddr,
++		    fbcon_stride * fbcon_height);
++		sweet_early_mark(18, "fbcon mapping returned");
++		if (fbcon_base != NULL) {
++			register_serial_functions(&sweet_fbcon_serial_functions);
++		}
+ 		return;
+ 	}
+ 	if (SecureDTGetProperty(entry, "width", (void const **)&val, &size) == kSuccess) {
+ 		fbcon_width = *val;
+ 	}
