@@ -515,6 +515,32 @@ static void hw_facts(void)
 	out("\n");
 }
 
+/* TEMPORARY: one hex+ascii block of the mark page.  The loader prints the
+ * page as text too, but text stops at the first zero byte, and a page that
+ * is cut in half after 60 bytes needs to be seen byte for byte. */
+static void mk_lines(volatile char *m, int base, int len)
+{
+	static const char hd[] = "0123456789abcdef";
+	char hx[4], row[18];
+
+	for (int i = 0; i < len; i += 16) {
+		out("mk ");
+		for (int j = 0; j < 16; j++) {
+			uint8_t c = (uint8_t)m[base + i + j];
+			hx[0] = hd[c >> 4];
+			hx[1] = hd[c & 15];
+			hx[2] = (j == 15) ? 0 : ' ';
+			hx[3] = 0;
+			out(hx);
+			row[j] = (c >= 0x20 && c < 0x7f) ? (char)c : '.';
+		}
+		row[16] = 0;
+		out("  ");
+		out(row);
+		out("\n");
+	}
+}
+
 uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 {
 	mark('0');
@@ -557,8 +583,24 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 		{
 			static const char hd[] = "0123456789abcdef";
 			char hx[3];
+			int first_nul = -1, last_nz = -1;
 
-			out("mkhex=");
+			for (int i = 0; i < 4096; i++) {
+				if (m[i])
+					last_nz = i;
+				else if (first_nul < 0)
+					first_nul = i;
+			}
+			/* mklen: where the text ends (first zero byte);
+			 * mkend: last byte that is not zero.  Equal values mean
+			 * a clean text; mkend much larger means the page holds
+			 * more than mklen shows, i.e. a hole in the middle. */
+			kv("mklen", (uint64_t)(first_nul < 0 ? 4096 : first_nul));
+			out("\n");
+			kv("mkend", (uint64_t)(last_nz + 1));
+			out("\n");
+
+			out("mkhead=");
 			for (int i = 0; i < 32; i++) {
 				hx[0] = hd[((uint8_t)m[i]) >> 4];
 				hx[1] = hd[((uint8_t)m[i]) & 15];
@@ -566,10 +608,19 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 				out(hx);
 			}
 			out("\n");
+			if (last_nz >= 0) {
+				int start = last_nz > 160 ? (last_nz - 160) & ~15 : 0;
+
+				mk_lines(m, 0, 160);
+				if (start) {
+					out("mk ...\n");
+					mk_lines(m, start, 160);
+				}
+			}
 		}
 		if (m[0] != '\0') {
 			out("kernel marks:\n");
-			for (int i = 0; i < 4095 && m[i]; i++) {
+			for (int i = 0; i < 2047 && m[i]; i++) {
 				line[n++] = m[i];
 				if (n == (int)sizeof(line) - 1 || m[i] == '\n') {
 					line[n] = 0;
@@ -584,6 +635,43 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 			}
 		} else {
 			out("kernel marks: none (kernel did not reach arm_init)\n");
+		}
+		/* One byte per stage, written by sweet_early_mark() next to the
+		 * text (0x800 + stage) and never split by a dying cache: this
+		 * list is the answer to "which stage was the last one".  0xfe is
+		 * the fault hook, 0xff/0xfd/... are not used by a stage. */
+		{
+			volatile uint8_t *b = (volatile uint8_t *)(uintptr_t)XMARK_PHYS;
+			int n = 0;
+
+			out("mkbits:");
+			for (int i = 0; i < 256; i++) {
+				char d[4], s2[2];
+				int v = i, k = 0;
+
+				if (!b[0x800 + i])
+					continue;
+				n++;
+				if (i == 0xfe) {
+					out(" FAULT");
+					continue;
+				}
+				out(" ");
+				while (v) {
+					d[k++] = (char)('0' + v % 10);
+					v /= 10;
+				}
+				if (!k)
+					d[k++] = '0';
+				while (k) {
+					s2[0] = d[--k];
+					s2[1] = 0;
+					out(s2);
+				}
+			}
+			if (!n)
+				out(" (none)");
+			out("\n");
 		}
 		fill((uintptr_t)XMARK_PHYS, 0x1000, 0);
 	}

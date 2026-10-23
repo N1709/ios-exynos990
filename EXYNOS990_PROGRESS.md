@@ -269,6 +269,15 @@ page-size selection.  `0138` puts a mark after each of those calls and
 records ESR/FAR in the page from `sleh_synchronous`, so the next run
 either names the call that faults or shows the fault address.
 
+The mark text is not trustworthy down to the last byte: the phone's next
+run showed `stage …0014: configure_timer_apple_regs …` cut in half, which
+can mean either "the call returned and the next one died" or "the text was
+only half cleaned to DRAM when the CPU stopped".  `0139` therefore sets one
+byte per stage at `SWEET_MARK_BASE + 0x800 + stage` (and `0x8fe` in the
+fault hook) and cleans the whole 0x900 bytes on every mark; the loader
+prints `mkbits:` with the set stages.  It also marks the four steps inside
+`wfe_timeout_configure()`, the call right after the last mark that appeared.
+
 Note that the ring record is useful only when XNU never reaches
 `serial_init`: then the loader's own text survives intact, which is what
 happened here (`JUMP TO XNU` is the last line).  `prev_ring_park()` in

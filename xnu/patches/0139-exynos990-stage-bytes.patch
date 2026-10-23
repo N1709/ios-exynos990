@@ -1,0 +1,99 @@
+Subject: [PATCH] exynos990: one byte per boot stage, and marks inside
+ wfe_timeout_configure
+
+The phone's last run wrote
+
+    stage ...0001: arm_init entered (MMU on)
+    stage ...0002: PE_init_platform done
+    stage ...0014: configure_timer_apple_regs ...
+
+and stopped inside that third line, so the text alone cannot say whether
+configure_timer_apple_regs() returned and wfe_timeout_configure() died, or
+whether the line itself was only half written to DRAM when the CPU stopped
+(text is written byte by byte and the last cache line may never be cleaned).
+
+Fix the measurement instead of guessing: every mark now also sets one byte
+at SWEET_MARK_BASE + 0x800 + stage, and every mark cleans the whole 0x900
+bytes of the page, so a stage either arrived or it did not.  The fault hook
+sets byte 0x8fe, which answers "did it fault" even when its text is lost.
+
+Then split wfe_timeout_configure: it is the call right after the last mark
+the phone showed, and it reads the boot-arg string and the timebase
+frequency before computing the event bit index, so a bad pointer there
+faults where no console can see it.
+
+diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
+--- a/osfmk/arm64/sweet_early.c
++++ b/osfmk/arm64/sweet_early.c
+@@ -101,15 +101,19 @@
+ 	sweet_mark_puts("stage ");
+ 	sweet_mark_hex((uint64_t)stage);
+ 	sweet_mark_puts(": ");
+ 	sweet_mark_puts(label);
+ 	sweet_mark_puts("\n");
++	/* One byte per stage, next to the text: the text can be half written
++	 * when the CPU stops, a byte store cannot.  The loader prints which
++	 * stages are set. */
++	((volatile uint8_t *)SWEET_MARK_BASE)[0x800 + (stage & 0xffu)] = 1;
+ 	a = (uintptr_t)SWEET_MARK_BASE;
+-	e = a + ((sweet_mark_off + 63u) & ~(uintptr_t)63);
++	e = a + 0x900;	/* the text and the stage bytes */
+ 	for (; a < e; a += 64)
+ 		__asm__ volatile("dc civac, %0" :: "r"(a) : "memory");
+ 	__asm__ volatile("dsb sy" ::: "memory");
+ }
+ 
+ void
+ sweet_early_fault(uint64_t esr, uint64_t far)
+ {
+@@ -115,9 +119,12 @@
+ 
+ 	sweet_mark_puts("FAULT esr=");
+ 	sweet_mark_hex(esr);
+ 	sweet_mark_puts(" far=");
+ 	sweet_mark_hex(far);
+ 	sweet_mark_puts("\n");
++	/* Same reason as above: one byte that says "a fault was taken", so
++	 * the fact survives even if the ESR/FAR text does not. */
++	((volatile uint8_t *)SWEET_MARK_BASE)[0x8fe] = 1;
+ 	a = (uintptr_t)SWEET_MARK_BASE;
+ 	e = a + ((sweet_mark_off + 63u) & ~(uintptr_t)63);
+ 	for (; a < e; a += 64)
+diff --git a/osfmk/arm64/machine_routines.c b/osfmk/arm64/machine_routines.c
+--- a/osfmk/arm64/machine_routines.c
++++ b/osfmk/arm64/machine_routines.c
+@@ -2313,19 +2313,24 @@
+ {
+ 	/* Could fill in our own ops here, if we needed them */
+ 	uint64_t        ticks_per_sec, ticks_per_event, events_per_sec = 0;
+ 	uint32_t        bit_index;
++	extern void sweet_early_mark(unsigned int, const char *);
++
++	sweet_early_mark(27, "wfe_timeout_configure entered");
+ 
+ 	if (PE_parse_boot_argn("wfe_events_sec", &events_per_sec, sizeof(events_per_sec))) {
+ 		if (events_per_sec <= 0) {
+ 			events_per_sec = 1;
+ 		} else if (events_per_sec > USEC_PER_SEC) {
+ 			events_per_sec = USEC_PER_SEC;
+ 		}
+ 	} else {
+ 		events_per_sec = USEC_PER_SEC;
+ 	}
++	sweet_early_mark(28, "wfe boot arg parsed");
+ 	ticks_per_sec = gPEClockFrequencyInfo.timebase_frequency_hz;
+ 	ticks_per_event = ticks_per_sec / events_per_sec;
++	sweet_early_mark(29, "timebase frequency read");
+ 
+ 	/* Bit index of next power of two greater than ticks_per_event */
+ 	bit_index = flsll(ticks_per_event) - 1;
+@@ -2353,8 +2358,9 @@
+ 	 * so we would want EVENTI to be 2 instead of 3.
+ 	 */
+ 	if (bit_index != 0) {
+ 		bit_index--;
+ 	}
++	sweet_early_mark(30, "event bit index computed");
+ 
+ 	arm64_eventi = bit_index;
+ }
