@@ -1,0 +1,83 @@
+218:[warning] Skipping patch /Users/runner/work/ios-exynos990/ios-exynos990/dxb/patches/iobuffermemd_monterey.patch (already upstream, previously applied, or malformed): error: patch failed: iokit/Kernel/IOBufferMemoryDescriptor.cpp:332
+219:error: iokit/Kernel/IOBufferMemoryDescriptor.cpp: patch does not apply
+221:[warning] Skipping patch /Users/runner/work/ios-exynos990/ios-exynos990/dxb/patches/machine_routines.patch (already upstream, previously applied, or malformed): error: patch failed: osfmk/arm64/machine_routines.c:2097
+222:error: osfmk/arm64/machine_routines.c: patch does not apply
+223:[warning] Skipping patch /Users/runner/work/ios-exynos990/ios-exynos990/dxb/patches/skywalk_sonoma.patch (already upstream, previously applied, or malformed): error: patch failed: bsd/skywalk/packet/os_packet.h:883
+224:error: bsd/skywalk/packet/os_packet.h: patch does not apply
+229:[warning] Skipping patch /Users/runner/work/ios-exynos990/ios-exynos990/dxb/patches/syntax_checker_sonoma.patch (already upstream, previously applied, or malformed): error: patch failed: tools/lldbmacros/core/syntax_checker.py:1
+230:error: tools/lldbmacros/core/syntax_checker.py: patch does not apply
+232:[warning] Skipping patch /Users/runner/work/ios-exynos990/ios-exynos990/dxb/patches/TrustCache.patch (already upstream, previously applied, or malformed): error: EXTERNAL_HEADERS/TrustCache/API.h: already exists in working directory
+233:error: EXTERNAL_HEADERS/TrustCache/RawTypes.h: already exists in working directory
+234:error: EXTERNAL_HEADERS/TrustCache/Return.h: already exists in working directory
+235:error: EXTERNAL_HEADERS/TrustCache/Types.h: already exists in working directory
+236:error: EXTERNAL_HEADERS/TrustCache/TypesConfig.h: already exists in working directory
+27610: 1413 |                                             "(kcdata_memcpy error: %d, length: %ld)\n",
+27616: 1418 |                                     "(os_reason_alloc_buffer error: %d, kcdata error: %d, length: %ld)\n",
+29995: 1348 |                 IOLog("IOPolledFilePollersSetup for corefile failed with error: 0x%x\n", err);
+82563:/Users/runner/work/ios-exynos990/ios-exynos990/dxb/xnu/osfmk/arm64/arm_vm_init.c:2229:24: error: call to undeclared function 'L1_TABLE_T1_INDEX'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+82617:make[7]: *** [arm_vm_init.o] Error 1
+155029: 1494 |                         printf("(kdp_core_init_encryption_stage) Failed to initialize the encryption stage. Error 0x%x\n", ret);
+155033: 1529 |                         printf("kdp_core_handle_new_encryption_key failed to re-initialize encryption stage. Error 0x%x\n", ret);
+155037: 1562 |                         printf("kdp_core_handle_new_encryption_key failed to read the existing corefile header. Error 0x%x\n", ret);
+155041: 1585 |                                 printf("kdp_core_handle_new_encryption_key failed to update the existing corefile header. Error 0x%x\n", ret);
+155045: 1591 |                                 printf("kdp_core_handle_new_encryption_key failed to write the corefile header. Error 0x%x\n", ret);
+155049: 1600 |                                 printf("kdp_core_handle_new_encryption_key failed to write the next public key. Error 0x%x\n", ret);
+155099: 1623 |                                         printf("kdp_core_handle_new_encryption_key failed to zero-out the public key region. Error 0x%x\n", temp_ret);
+155106: 1700 |                 printf("kdp_core_polled_io_polled_file_available failed to read corefile header. Error 0x%x\n", ret);
+155134: 1727 |                         printf("kdp_core_polled_io_polled_file_available failed to read the public key. Error 0x%x\n", ret);
+158082:  274 |                 printf("(aea_availability_callback) Failed to handle availability of encryption. Error 0x%x\n", ret);
+160622:  158 |                 printf("buffer_stage_initialize failed to allocate memory. Error 0x%x\n", ret);
+163136:  268 |                 printf("(%s) Failed to handle availability of LZ4. Error 0x%x\n", __func__, ret);
+171041:  102 |                 printf("progress_notify_stage_initialize failed to allocate memory. Error 0x%x\n", ret);
+175649:  272 |                 printf("zlib_stage_initialize failed to allocate memory. Error 0x%x\n", ret);
+181312:  143 |                 printf("%s failed to allocate memory. Error 0x%x\n", __func__, ret);
+403799: 1386 |                 NETEM_LOG(LOG_ERR, "| error: invalid scheduler model %d",
+403810: 1392 |                 NETEM_LOG(LOG_ERR, "| error: corruption_p %d > %d",
+403821: 1398 |                 NETEM_LOG(LOG_ERR, "| error: duplication_p %d > %d",
+403832: 1413 |                     "| error: latency %d too big (> 1 sec)",
+403843: 1420 |                     "| error: jitter %dms too big (latency %dms)",
+403854: 1420 |                     "| error: jitter %dms too big (latency %dms)",
+403865: 1438 |                     "| error: loss recovery %dms too big",
+403876: 1456 |                 NETEM_LOG(LOG_ERR, "| error: reordering %d > %d",
+403887: 1463 |                     "| error: output interval %dms too big",
+481406: 1187 |                         FDLOG(LOG_NOTICE, &nil_pcb, "flow_divert_send_packet: ctl_enqueuembuf returned an error: %d", error);
+482727: 2632 |                 FDLOG(LOG_ERR, fd_cb, "failed to get the close error: %d", error);
+485730: 4394 |                                 FDLOG(LOG_NOTICE, &nil_pcb, "flow_divert_kctl_rcvd: ctl_enqueuembuf returned an error: %d", error);
+526627:  202 |                 ipseclog((LOG_DEBUG, "ah4_output: internal error: "
+526735:  466 |                 ipseclog((LOG_DEBUG, "ah6_output: internal error: "
+532488:  312 |                         ipseclog((LOG_DEBUG, "esp4_output: internal error: "
+532500:  321 |                         ipseclog((LOG_DEBUG, "esp6_output: internal error: "
+552008:  275 |         SASEL_LOG("Returned with error: %_VA_ARGS__)
+608064: 3075 |                             "*** INVALID PAGE ***\n",
+693653:   54 |                         printf("%s:%u error: %d\n", __func__, __LINE__, var);   \
+693665:   54 |                         printf("%s:%u error: %d\n", __func__, __LINE__, var);   \
+693682:   54 |                         printf("%s:%u error: %d\n", __func__, __LINE__, var);   \
+693693:   54 |                         printf("%s:%u error: %d\n", __func__, __LINE__, var);   \
+693702:   54 |                         printf("%s:%u error: %d\n", __func__, __LINE__, var);   \
+693718:   54 |                         printf("%s:%u error: %d\n", __func__, __LINE__, var);   \
+693732:   54 |                         printf("%s:%u error: %d\n", __func__, __LINE__, var);   \
+693741:   54 |                         printf("%s:%u error: %d\n", __func__, __LINE__, var);   \
+693750:   54 |                         printf("%s:%u error: %d\n", __func__, __LINE__, var);   \
+693761:   54 |                         printf("%s:%u error: %d\n", __func__, __LINE__, var);   \
+693770:   54 |                         printf("%s:%u error: %d\n", __func__, __LINE__, var);   \
+693782:   54 |                         printf("%s:%u error: %d\n", __func__, __LINE__, var);   \
+693791:   54 |                         printf("%s:%u error: %d\n", __func__, __LINE__, var);   \
+693802:   54 |                         printf("%s:%u error: %d\n", __func__, __LINE__, var);   \
+693818:   54 |                         printf("%s:%u error: %d\n", __func__, __LINE__, var);   \
+693832:   54 |                         printf("%s:%u error: %d\n", __func__, __LINE__, var);   \
+693841:   54 |                         printf("%s:%u error: %d\n", __func__, __LINE__, var);   \
+693850:   54 |                         printf("%s:%u error: %d\n", __func__, __LINE__, var);   \
+695679: 1736 |                 printf("jnl: %s: create: error: phys blksize %u bigger than min fs blksize %zd\n",
+695731: 1889 |                 printf("jnl: %s: open: error: phys blksize %u bigger than min fs blksize %zd\n",
+695872: 2153 |                 printf("jnl: %s: is_clean: error: phys blksize %d bigger than min fs blksize %zd\n",
+695878: 2153 |                 printf("jnl: %s: is_clean: error: phys blksize %d bigger than min fs blksize %zd\n",
+768825:make[6]: :*** [build_all] Error 2 
+768868:make[5]:   479 |         SYSCTL_OID(parent, nbr, name, CTs*** [do_all] Error 2eLTYPE_INT|access, \
+768890:  720 |             (typeof(func(a))(*)(const void *))make[4]: *** [build_all] Error 2
+768914: 1147 | SYSCTL_INT(_hw_optional_arm, OID_AUTO,*** [build_all_recurse_into_conf] Error 2
+768934:  416 |         __STARTUP_ARG(sysctiltin_constant_pl_##parent, _##name,                             (ptr) || sizeof(*(ptr)) ==make[2]: *** [build_all_recurse_into_osfmk] Error 2
+785312: 3177 |                 printf("Failed to handle the new encryption key. Error 0x%x", ret);
+809291: 3374 |                             "(kcdata_memcpy error: %d, length: %ld)\n",
+809297: 3379 |                     "(os_reason_alloc_buffer error: %d, kcdata error: %d, length: %ld)\n",
+954181:make[1]: *** [build_all_bootstrap_DEVELOPMENT^ARM64^EXYNOS990] Error 2
+954183:make: *** [install] Error 2
