@@ -147,3 +147,19 @@ jobs:
           name: xnu-kernel
           path: out/
           if-no-files-found: warn
+
+      - name: Publish the kernel
+        if: success()
+        run: |
+          # Downloading an artifact needs a logged-in browser session; the
+          # host that builds the boot image only has git.  Put the kernel on
+          # a branch as well, so `git fetch origin ci-kernel` is enough.
+          git config user.name 'github-actions'
+          git config user.email 'github-actions@github.com'
+          git checkout -q -B ci-kernel
+          rm -rf ci-kernel && mkdir -p ci-kernel
+          cp out/kernel.* out/SHA256SUMS ci-kernel/ 2>/dev/null || true
+          ls -la ci-kernel
+          git add -f ci-kernel
+          git commit -q -m "kernel for ${GITHUB_SHA}" || true
+          git push -q -f origin ci-kernel

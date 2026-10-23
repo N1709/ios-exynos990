@@ -193,6 +193,24 @@ longer a hard-coded KVA: `SweetFramebuffer.cpp` uses
 payload's `virt_base`. Physical addresses do not move, so `XMARK_PHYS`
 (`0x8924ac000`) and the boot_args/ADT placement stay valid.
 
+**Patch order, learned the hard way (run 39876116129):** `0084` and `0097` are
+A5XELTE-only *on purpose*.  `0125` contains the hunks that extend exactly
+those two files (and `arm_init.c`, `pe_serial.c`, ...) to EXYNOS990 by
+matching the A5XELTE-only text that `0084`/`0097` leave behind.  Editing
+`0084`/`0097` therefore makes `0125` "patch does not apply", the build script
+skips `0125` and every later EXYNOS990 patch (`0126`–`0136`), `proc_reg.h`
+then sees an unknown board and the kernel dies at compile time with
+`processor not supported`.  Board enablement for a file belongs in `0125`
+(or a patch numbered after it), never in the A5XELTE patches.
+
+For the screen, `fbcon_probe` only knew the ADT node `samsung-fbcon`, which
+this board cannot have: the framebuffer address is known only after the
+loader reads the DECON window registers.  `0137` adds a fallback to
+`PE_current_console()`, i.e. `boot_args.Video`, with a 32 bpp/stride/64 MiB
+sanity check before `ml_io_map_wcomb`.  The panel runs in command mode, so
+the bootloader's own buffer is the only frame DECON will send without being
+reprogrammed.
+
 ## Next action (scope: E3–E5, E6 deferred)
 
 E1 is done on the phone and E2 is one boot away from being either proven or
