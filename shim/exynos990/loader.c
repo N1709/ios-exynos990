@@ -250,10 +250,11 @@ static void copy(uintptr_t dst, uintptr_t src, uint64_t n)
 /* ---- TEMPORARY kernel early-mark reader ---------------------------------
  * The kernel's sweet_early_mark() writes "XMARK v1" plus one line per stage
  * into the low page of the interrupt stack by KVA and cleans it to DRAM, so
- * it survives the AP watchdog reset.  That page is _intstack at
- * 0xfffffe00084ac000 -> PA 0x8924ac000 in this kernel.  Print it and clear
- * it for the next kernel.  Remove with sweet_early_mark (patch 0127). */
-#define XMARK_KVA  0xfffffe00084ac000ull
+ * it survives the AP watchdog reset.  The page is at __TEXT + 0x14a8000 by
+ * PA (0x8924ac000 for this payload); the KVA depends on the link address,
+ * which is the compact 39-bit layout (0xfffffff007004000), so the walk uses
+ * the payload's own virt_base instead of a constant.  Print it and clear it
+ * for the next kernel.  Remove with sweet_early_mark (patch 0127). */
 #define XMARK_PHYS 0x8924ac000ull
 
 static uint32_t g_run;	/* loader run counter, rides in the mark page */
@@ -317,7 +318,8 @@ static uint64_t pt_walk(uint64_t pt_pa, uint64_t va)
 	return 0;
 }
 
-static void pt_report(uint64_t pt_pa, uint64_t entry_va, uint64_t entry_pa)
+static void pt_report(uint64_t pt_pa, uint64_t entry_va, uint64_t entry_pa,
+                      uint64_t kva0, uint64_t kpa0)
 {
 	kv("ptpa", pt_pa);
 	out("\n");
@@ -367,10 +369,12 @@ static void pt_report(uint64_t pt_pa, uint64_t entry_va, uint64_t entry_pa)
 	}
 	{
 		/* The stack top and the mark page: arm_init's prologue and the
-		 * marks both write there, so both must be mapped. */
-		uint64_t d = pt_walk(pt_pa, XMARK_KVA + 0x8000 - 0x1000);
+		 * marks both write there, so both must be mapped.  The mark page
+		 * KVA follows the link address; its PA is fixed inside __BOOTDATA. */
+		uint64_t mark_kva = kva0 + (XMARK_PHYS - kpa0);
 
-		kv("ptstk", d);
+		kv("ptstk", pt_walk(pt_pa, mark_kva + 0x8000 - 0x1000));
+		kv("ptmark", pt_walk(pt_pa, mark_kva));
 		out("\n");
 	}
 }
@@ -687,8 +691,14 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 
 	/* TEMPORARY: XNU wrote these pages before it turned the MMU on; the
 	 * copy below replaces them, so read them now. */
+	/* TCR_EL1.T1SZ = 25 on this 4 KiB kernel: TTBR1 only covers the top
+	 * 512 GiB, so a kernel linked at -2 TiB (0xfffffe0007004000) cannot be
+	 * fetched after the MMU is enabled.  Print the range check: 0x1ffffff
+	 * is the only value that means the link address is reachable. */
+	kv("kva39", kva0 >> 39);
+	out(" (want 0x1ffffff)\n");
 	pt_report(kpa0 + PT_KVA_OFF, p->entry_va,
-		  p->phys_base + (p->entry_va - p->virt_base));
+		  p->phys_base + (p->entry_va - p->virt_base), kva0, kpa0);
 
 	for (uint64_t i = 0; i < nsegs; i++) {
 		const volatile struct payload_seg *s = &p->segs[i];

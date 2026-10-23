@@ -167,6 +167,32 @@ header), the way iBoot does. Copy destinations,
 `deviceTreeP` and `entry_pa` do not move, because only the common offset
 `virtBase - physBase` matters for them.
 
+**The real silence, found 2026-10-23: the kernel is linked outside its own
+TTBR1 window.** The boot image's kernel is `ARM64_BOARD_CONFIG_EXYNOS990`
+built for `XNU_PLATFORM_MacOSX` without a link-address override, so it is
+linked at `0xfffffe0007004000` (`__TEXT`). The same kernel builds 4 KiB page
+tables (`osfmk/arm64/start.s`), and its `TCR_EL1_BOOT` — read straight out of
+the Mach-O at `_sysreg_restore`, `0x22a5192519` — has `T1SZ = 25`: TTBR1 only
+covers the top 512 GiB, i.e. `0xffffff8000000000` and above. `0xfffffe00…` is
+0.5 TiB *below* that, in the hole between the TTBR0 and TTBR1 ranges, so after
+`common_start` enables the MMU the `ret` to `arm_init`, `VBAR_EL1`
+(`0xfffffe000742e000`), the stacks and the mark page are all translation
+faults; the vector fetch faults too, which is a silent double fault. That is
+consistent with every observation: `_start` and `common_start` run (they use
+physical addresses and the identity map), the bootstrap tables are correctly
+written (the loader reads them), and *nothing* after the MMU enable happens —
+no `sweet_early_mark`, and `arm_init`'s prologue never stores `x29/x30` below
+`_intstack_top`.
+
+Patch `0093` had already fixed exactly this for A5XELTE (relink to
+`0xfffffff007004000` plus `-UARM_LARGE_MEMORY`); the condition only listed
+`A5XELTE`. It now covers both boards, and the related 39-bit-VA patches
+(`0084` user VA limit, `0097` zone VA size) do the same. The mark page is no
+longer a hard-coded KVA: `SweetFramebuffer.cpp` uses
+`&intstack_low_guard`, and the loader derives the diagnostic KVA from the
+payload's `virt_base`. Physical addresses do not move, so `XMARK_PHYS`
+(`0x8924ac000`) and the boot_args/ADT placement stay valid.
+
 ## Next action (scope: E3–E5, E6 deferred)
 
 E1 is done on the phone and E2 is one boot away from being either proven or

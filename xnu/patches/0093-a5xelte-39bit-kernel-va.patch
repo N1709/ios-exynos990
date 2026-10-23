@@ -1,13 +1,17 @@
 --- a/makedefs/MakeInc.def
 +++ b/makedefs/MakeInc.def
-@@ -338,6 +338,14 @@
+@@ -338,6 +338,18 @@
  ARM64_LINK_ADDR    =0xfffffe0007004000
  endif
  
-+# Exynos7580 uses 4 KiB pages: TTBR1 has a 39-bit range. The macOS
-+# ARM_LARGE_MEMORY link address at -2 TiB is outside that range. Keep this
-+# board inside the existing compact kernel VA layout instead.
-+ifeq ($(CURRENT_MACHINE_CONFIG),A5XELTE)
++# Exynos7580 and Exynos 990 both run the kernel with 4 KiB pages, so TTBR1
++# only covers the top 512 GiB (TCR_EL1.T1SZ = 25). The macOS
++# ARM_LARGE_MEMORY link address at -2 TiB (0xfffffe0007004000) is outside
++# that window: the MMU comes up, but the first instruction fetch at a kernel
++# KVA (the ret into arm_init) and the exception vectors are translation
++# faults, so the CPU dies with no output at all. Keep these boards inside
++# the existing compact kernel VA layout instead.
++ifneq ($(filter $(CURRENT_MACHINE_CONFIG),A5XELTE EXYNOS990),)
 +LARGE_MEMORY_DEFINE=-UARM_LARGE_MEMORY
 +ARM64_PLKSEG_ADDR  =0xfffffff004004000
 +ARM64_LINK_ADDR    =0xfffffff007004000

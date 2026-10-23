@@ -32,7 +32,7 @@ diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
 index 84bc9ee..d9c4715 100644
 --- a/osfmk/arm64/sweet_early.c
 +++ b/osfmk/arm64/sweet_early.c
-@@ -7,7 +7,95 @@
+@@ -7,7 +7,99 @@
   */
  #include <arm64/sweet_early.h>
  
@@ -58,7 +58,11 @@ index 84bc9ee..d9c4715 100644
 +#include <stdint.h>
 +#include <kern/misc_protos.h>
 +
-+#define SWEET_MARK_BASE 0xfffffe00084ac000ull	/* _intstack, low page */
++/* The low page of the interrupt stack, by symbol: the loader knows its
++ * physical address (offset from __TEXT), and hard-coding the KVA here broke
++ * as soon as the kernel was relinked into the compact 39-bit VA layout. */
++extern "C" { extern vm_offset_t intstack_low_guard; }
++#define SWEET_MARK_BASE ((uintptr_t)&intstack_low_guard)
 +#define SWEET_MARK_CAP  4096u
 +
 +static unsigned int sweet_mark_off;

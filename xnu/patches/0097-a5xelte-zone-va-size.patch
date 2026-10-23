@@ -1,13 +1,14 @@
 --- a/osfmk/kern/zalloc.c
 +++ b/osfmk/kern/zalloc.c
-@@ -160,6 +160,11 @@
+@@ -160,6 +160,12 @@
  #define ZONE_GUARD_SPARSE       (64  * 1024)
  #endif /* ZSECURITY_CONFIG(SAD_FENG_SHUI) */
  
 -#if XNU_PLATFORM_MacOSX
-+/* The A5XELTE 4 KiB kernel uses the compact 48 GiB heap VA layout even
-+ * though the development build selects MacOSX platform facilities. */
-+#if defined(A5XELTE)
++/* The A5XELTE and EXYNOS990 4 KiB kernels use the compact 48 GiB heap VA
++ * layout even though the development build selects MacOSX platform
++ * facilities. */
++#if defined(A5XELTE) || defined(EXYNOS990)
 +#define ZONE_MAP_MAX            (8ULL << 30)
 +#define ZONE_MAP_VA_SIZE        (24ULL << 30)
 +#elif XNU_PLATFORM_MacOSX
