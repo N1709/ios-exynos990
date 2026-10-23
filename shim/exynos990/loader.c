@@ -776,7 +776,10 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 	mark('8');
 	struct decon_fb fb;
 	decon_probe(kv, out, &fb);
-	smmu_probe(kv, out);
+	/* The SYSMMU probe is done: PT_BASE_PPN (0x1910000C) raises a
+	 * synchronous external abort, so the loader can never own the DPU page
+	 * table.  Leave it out - with the probe in place the loader dies before
+	 * the jump and the kernel never runs. */
 	/* First visible sign of life, milliseconds after entry: if this band
 	 * never appears the loader did not execute at all. */
 	paint_band(&fb, 0xff00ff00u);

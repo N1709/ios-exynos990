@@ -1,27 +1,23 @@
 Subject: [PATCH] exynos990: keep the bootstrap TTBR0 while bringing the VM up
 
-Marks 38, 39 and 41 are all written, mark 10 is not, and the only code
-between them is set_mmu_ttb(invalid_ttep) followed by flush_mmu_tlb().
-After that flush the very next store (the mark byte itself) never
-returns, and no synchronous-exception byte is left either - so the first
-access after the flush either faults in a way the early handler cannot
-record, or points at tables the early walk cannot use.
-
-Leave the bootstrap TTBR0 in place for now and label mark 10 honestly.
-If the kernel then walks past it into pmap_bootstrap, the switch is the
-culprit and the mapping cpu_ttep installs for the kernel image needs to
-be understood before the switch comes back; if it still stops, the
-problem is elsewhere in that window.
+Mark 10 is never written and the only code between mark 41 and mark 10
+is flush_mmu_tlb().  The previous version of this patch failed to apply
+(0141 inserted its mark into the context) and the build kept going, so
+the experiment never ran.  Retry it against the real source: skip the
+switch, keep the flush, and label the marks honestly.  If the kernel
+then reaches pmap_bootstrap the switch is the culprit; if mark 10 is
+still missing, the flush itself (or the first store after it) is.
 
 diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
 --- a/osfmk/arm64/arm_vm_init.c
 +++ b/osfmk/arm64/arm_vm_init.c
-@@ -2316,4 +2316,6 @@
+@@ -2308,6 +2308,6 @@
 -	set_mmu_ttb(invalid_ttep & TTBR_BADDR_MASK);
-+	/* bring-up: the switch is deferred until the tables are proven */
-+	if (0)
-+		set_mmu_ttb(invalid_ttep & TTBR_BADDR_MASK);
+-	sweet_early_mark(41, "ttbr0 switched to invalid");
++	/* bring-up: keep the bootstrap TTBR0 until the final tables are proven */
++	sweet_early_mark(41, "ttbr0 switch deferred");
  
  	flush_mmu_tlb();
 -	sweet_early_mark(10, "TTBR0 off; TLB flushed");
 +	sweet_early_mark(10, "TTBR0 kept; TLB flushed");
+ 	kva_active = TRUE;
