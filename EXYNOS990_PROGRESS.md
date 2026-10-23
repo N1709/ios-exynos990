@@ -659,3 +659,33 @@ PHY reset order (assert *after* the DSIM reset, not before), and the DECON
 commit order (request then trigger, never poll before the trigger) are all
 confirmed on the phone.
 
+## 2026-10-23: the marks before the flush prove nothing - the TLB was still warm
+
+Two silent failures were caught today, both worth remembering:
+
+1. Patch 0142 did not apply at all.  0141 had inserted its mark (41) exactly on
+   the line 0142 used as context, the build script carried on, and the kernel
+   shipped with the old string.  The experiment therefore never ran; only a
+   `strings` check of the produced kernel showed it (`patch-marker=0`).  Any
+   kernel-side experiment must be verified by a unique string in the built
+   binary before it is flashed.
+2. With 0142 really applied (marker present) mark 10 is *still* missing.  So
+   `set_mmu_ttb(invalid_ttep)` was never the wall: `flush_mmu_tlb()` is.
+
+The reason marks 38/39/41 succeed is that they are written while the TLB still
+holds translations built from the bootstrap tables; XNU says as much in the
+comment right after this block ("From here on out, we're off the bootstrap
+translation tables").  The flush throws those entries away, and the very next
+store has to walk `cpu_ttep`, which was `bzero`ed and then filled by
+`arm_vm_prot_init`/`init_ptpages`.  No `FAULT` byte is left, which fits a fault
+taken before the handler can record anything (or an instruction fetch whose own
+page is not mapped).
+
+Patch 0143 therefore does not guess: it walks `cpu_ttep` and `boot_ttep` in
+software, from C, before the flush, for one text and one data address, and
+reports the level at which the walk stops (marks 50..65, value 4 = table
+pointer outside the RAM window).  If `cpu_ttep` walks to a page while
+`boot_ttep` does too, the mapping is fine and the wall is elsewhere; if
+`cpu_ttep` stops at L1, the kernel image is simply not in the table that is
+about to become live, and that is the bug to fix.
+
