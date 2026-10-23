@@ -31,11 +31,48 @@ image v2, so the port has its own loader in `shim/exynos990/`.
 | Item | What it is | State | Tested |
 | --- | --- | --- | --- |
 | E1 | Loader: arm64 Image for S-Boot, UART, UFS probe, payload copy, jump to XNU | done | flashed: S-Boot accepts the image, the loader reads its DTB, finds the payload, copies all ten segments into the XNU window, builds ADT + `boot_args` and jumps; log ends at `JUMP TO XNU` |
-| E2 | XNU board config, patches `0125`–`0136` | in progress | CI builds it (`xnu-kernel` artifact) and the handoff is proven on the phone, but **XNU has not printed anything yet**; `0136` moved its klog to the ramoops dump zone (`0xeb308000`) to capture the first text |
+| E2 | XNU board config, patches `0125`–`0141` | in progress | CI builds it and XNU now runs: stage bytes 1–7 and 20–37 are written on the phone (all of `arm_init`, `arm_vm_init` up to and including `arm_vm_physmap_init`). It stops between mark 37 and mark 10, i.e. in `set_mmu_ttb_alternate()` / `ml_enable_monitor()` / `set_mmu_ttb(invalid_ttep)`; `0141` marks those three |
 | E3 | UFS: protector/descriptor type, plain 16-byte and FMP 128-byte PRDT, GPT | 90% | code, not on a phone |
-| E4 | Display: DECON probe, `boot_args.Video` handoff, framebuffer console | 85% | probe runs on the phone but reads `stride=0`/`base=0` on z3s, so no framebuffer is handed to XNU yet |
+| E4 | Display: DECON/DSIM bring-up, framebuffer console | 60% | on the phone: DSIM0 PLL locks (`pll=0x1`), all four lanes report `PHY_READY`, the DECON shadow commit now completes (`upd_spin=0x1`); no pixels yet, because the panel expects a DSC-compressed frame and the DPP/DSIM frame path is not programmed |
 | E5 | Touch: bus/IRQ wiring per model, Y79A command set | 40% | wiring only; the z3s bus/IRQ is not confirmed |
 | E6 | iOS root in USERDATA (NativeUfs) | 0% | out of scope until E3–E5 run on the phone |
+
+**State 2026-10-23:** XNU runs much further than the first logs suggested.
+The old "stops at mark 20" reading was a cache artefact: the marks are now one
+atomic byte per stage, written to a page that survives TWRP, and the phone
+reports `mkbits: 1 2 3 4 5 6 7 20 … 30` plus `31 33 34 35 36 37` once patch
+`0140` is in. So `arm_init` completes (timer, `/chosen`, page size, CPU
+topology), and inside `arm_vm_init` everything through
+`arm_vm_physmap_init()` completes. The kernel stops before mark 10, the point
+where the bootstrap TTBR0 is dropped, so the remaining suspects are
+`set_mmu_ttb_alternate()`, `ml_enable_monitor()`, the console relocation and
+`set_mmu_ttb(invalid_ttep)`; patch `0141` puts a mark on each. Reads lag one
+boot: the loader prints the marks of the previous boot before zeroing the
+page, so every mark patch costs two cycles.
+
+Display work is the other track. The bootloader leaves DECON configured for
+the panel (`GLOBAL=0x133`, command mode, window 5 → DPP0 at 1440x3200) but
+shuts the DSI link down; the panel keeps its last frame in self refresh. The
+loader now reopens that link itself (`shim/exynos990/dsim_init.c`), in the
+vendor order of `dsim_reg.c`: select DPHY reset control → OSC link clock →
+DSIM reset → lanes/escape/word clock → PHY defaults and the D-PHY timings for
+the 1157 Mb/s row → assert DPHY reset → PLL (`p=2, m=178, s=2`) → lane power →
+release reset → word clock from PLL → link config → HS clock request. On the
+phone the PLL locks and all four lanes come up. DECON's shadow commit, which
+used to time out, now completes as soon as the update request is followed by
+the trigger instead of being polled first. What is still missing is the frame
+path: the DPU's SYSMMU is bypassed (CTRL `0x4`, enable is `0x5`) while every
+framebuffer address is 36-bit (DRAM starts at `0x880000000`), the IDMA base
+and stride registers are shadowed (`DMA_SHD_OFFSET 0x800`), and the panel is
+initialised for DSC, so the DPP encoder and the PPS packet have to be
+programmed before a frame is understood.
+
+Two facts worth remembering for any register work: the PMU isolation bit at
+`0x15860710` cannot be touched from the loader (the access hangs the bus; the
+power domains are behind an SMC), and the PHY module base is `0x190E0100`, so
+the MC block is at `0x190E0300` and the lanes at `0x190E0400+0x100n` — the
+first attempt wrote one page too low and the PLL still locked, which made the
+mistake look like a reset problem.
 
 **State 2026-10-22 (late):** the boot chain to XNU is complete on the phone.
 S-Boot accepts the v2 image, the loader reads the S-Boot device tree, finds
@@ -65,7 +102,8 @@ with its source file and line in `docs/exynos990-hardware.md`.
 | `shim/exynos990/loader.c` | the loader: payload scan, segment copy, `boot_args`, jump to XNU |
 | `shim/exynos990/console.c` | USI debug UART console (`0x10540000`, 115200 8N1) |
 | `shim/exynos990/ufs_probe.c` | read-only UFS probe (host state, GPT, descriptor type) |
-| `shim/exynos990/decon_probe.c` | read-only display probe: the panel the bootloader leaves running |
+| `shim/exynos990/decon_probe.c` | display probe, plus the temporary DPP0/DECON test frame |
+| `shim/exynos990/dsim_init.c` | DSIM0 + M4M4 PHY bring-up: reopens the DSI link the bootloader shuts down |
 | `shim/exynos990/board.h` | every board constant with its source |
 | `tools/mkadt_exynos990.py` | Apple Device Tree per model |
 | `tools/mkpayload.py` | the `SWEETXNU` container the loader reads |
@@ -75,7 +113,7 @@ with its source file and line in `docs/exynos990-hardware.md`.
 | `tools/check-exynos990-config.py` | static check of the XNU board configuration |
 | `tools/exynos990-collect.sh` | reads the board facts off the phone (TWRP) |
 | `tools/exynos990-readlog.sh` | dumps the RAM log the instant TWRP's adbd appears |
-| `xnu/patches/` | XNU patches, applied in order (`0125`–`0136`) |
+| `xnu/patches/` | XNU patches, applied in order (`0125`–`0141`) |
 | `docs/exynos990-hardware.md` | hardware facts, each with its Android kernel source |
 | `docs/exynos990-flash.md` | flashing procedure and the UART log |
 | `docs/exynos990-boot-audit.md` | every handoff assumption of the boot chain, with its status |

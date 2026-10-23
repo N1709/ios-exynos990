@@ -253,18 +253,26 @@ int display_test(uintptr_t fb_pa, unsigned w, unsigned h,
 	con = (con & ~IDMA_IMG_FORMAT_MASK) | IDMA_IMG_FORMAT(0);	/* ARGB8888 */
 	wr(IDMA(0) + IDMA_IN_CON, con);
 
+	/* Commit and then trigger, in that order: in command mode the
+	 * shadow update only completes while a frame is being transferred,
+	 * so polling before the trigger always times out
+	 * (decon_reg_update_req_and_unmask() calls set_trigger right after
+	 * the update request). */
 	wr(DECON + DECON_SHADOW_REG_UPDATE_REQ, DECON_SW_UPDATE_FOR_DECON);
-	for (spin = 0; spin < 1000; spin++) {
+	wr(DECON + DECON_HW_SW_TRIG_CONTROL, DECON_SW_TRIG_EN);
+	for (spin = 0; spin < 2000; spin++) {
 		if (!(rd(DECON + DECON_SHADOW_REG_UPDATE_REQ) & 0x3f))
 			break;
 	}
 	kv("upd_spin", (uint64_t)spin);
-
-	wr(DECON + DECON_HW_SW_TRIG_CONTROL, DECON_SW_TRIG_EN);
 	kv("trig", rd(DECON + DECON_HW_SW_TRIG_CONTROL));
 	kv("global", rd(DECON + GLOBAL_CONTROL));
 	kv("dma0_y", rd(IDMA(0) + IDMA_IN_BASE_ADDR_Y8));
 	kv("dma0_sz", rd(IDMA(0) + IDMA_IMG_SIZE));
+	kv("dma0_stride", rd(IDMA(0) + IDMA_SRC_STRIDE_1));
+	kv("smmu_1910", rd(0x19100000));
+	kv("smmu_pt", rd(0x1910000c));
+	kv("smmu_190a", rd(0x190a0000));
 	out("\n");
 	return 0;
 }
