@@ -139,26 +139,52 @@ static void paint_band(const struct decon_fb *fb, uint32_t argb)
 #define DUMP_SIZE		0x4000u
 #define DUMP_CAP		(DUMP_SIZE - 12u)
 
+static void dump_clean(uintptr_t addr, uint32_t len)
+{
+	/* The dump zone is reached through a normal memory mapping, so the
+	 * stores above may still sit in cache when TWRP reads the zone.  A
+	 * stale line reads as bytes from an earlier record: that is exactly
+	 * what turned "SCTLR=0xc5183a" into "0yC518#a" and "31 33 34" into
+	 * "3q 33 3u".  Clean every line to the point of coherency. */
+	for (uintptr_t a = addr & ~(uintptr_t)63; a < addr + len; a += 64)
+		__asm__ volatile("dc civac, %0" :: "r"(a) : "memory");
+	__asm__ volatile("dsb sy" ::: "memory");
+}
+
 static void klog_dump(void)
 {
 	static const char rec[] = "====0.0-D\n";
+	static const char sumtag[] = "XSUM=0x";
+	static const char digits[] = "0123456789abcdef";
 	volatile uint32_t *h = (volatile uint32_t *)DUMP_PHYS;
 	volatile uint8_t *d = (volatile uint8_t *)(DUMP_PHYS + 12);
-	uint32_t n = 0;
+	uint32_t n = 0, sum = 0;
 
 	for (const char *s = rec; *s; s++)
 		d[n++] = (uint8_t)*s;
 
 	uint32_t start = 0;	/* the record always begins at data[0] */
-	for (uint32_t i = 0; i < klog_len && n + 2 < DUMP_CAP; i++)
+	for (uint32_t i = 0; i < klog_len && n + 2 + 14 < DUMP_CAP; i++)
 		d[n++] = klog_buf[(start + i) % KLOG_CAP];
 
 	d[n++] = '\n';
+
+	/* Checksum over everything written so far (sum = sum * 33 ^ byte).
+	 * A half-written or stale cache line now shows up as a mismatch
+	 * instead of silently changing digits in the mark list. */
+	for (uint32_t i = 0; i < n; i++)
+		sum = (sum * 33u) ^ d[i];
+	for (const char *s = sumtag; *s; s++)
+		d[n++] = (uint8_t)*s;
+	for (int i = 28; i >= 0; i -= 4)
+		d[n++] = (uint8_t)digits[(sum >> i) & 0xf];
+	d[n++] = '\n';
+
 	h[0] = 0x43474244u;	/* "DBGC" */
 	h[1] = 0;		/* start: the record begins at data[0] */
 	h[2] = n;		/* size: n bytes of record */
 
-	__asm__ volatile("dsb sy" ::: "memory");
+	dump_clean(DUMP_PHYS, 12 + n);
 }
 
 /* ---- previous kernel's ring, parked where TWRP can read it --------------
@@ -672,6 +698,19 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 			}
 			if (!n)
 				out(" (none)");
+			/* The same bytes as hex, so a digits-only corruption in
+			 * the text above can be cross-checked instead of guessed
+			 * at.  Covers stages 0..95. */
+			out(" mkhex=");
+			for (int i = 0; i < 96; i++) {
+				char h2[3];
+				uint8_t v = b[0x800 + i];
+
+				h2[0] = "0123456789abcdef"[v >> 4];
+				h2[1] = "0123456789abcdef"[v & 0xf];
+				h2[2] = 0;
+				out(h2);
+			}
 			out("\n");
 		}
 		fill((uintptr_t)XMARK_PHYS, 0x1000, 0);
