@@ -326,6 +326,37 @@ static void copy(uintptr_t dst, uintptr_t src, uint64_t n)
 
 static uint32_t g_run;	/* loader run counter, rides in the mark page */
 
+/* The mark page is found by signature, not by a hard-coded physical address:
+ * the address moves whenever the kernel is relinked, and a stale constant
+ * silently reads another page of kernel data (that is what produced mark
+ * lists like "54 5 56 &0" and a bogus run counter).  The build-time constant
+ * stays as the hint for where to start looking. */
+static uintptr_t g_mark_phys = XMARK_PHYS;
+
+static uintptr_t
+mark_page_find(void)
+{
+	uintptr_t best = 0;
+	unsigned best_nz = 0;
+
+	for (uintptr_t a = XMARK_PHYS - 0x40000; a <= XMARK_PHYS + 0x40000; a += 0x1000) {
+		volatile char *q = (volatile char *)(uintptr_t)a;
+		unsigned nz = 0;
+
+		if (q[0] == 'X' && q[1] == 'M' && q[2] == 'A' && q[3] == 'R' &&
+		    q[4] == 'K' && q[5] == ' ' && q[6] == 'v' && q[7] == '1')
+			return a;
+		for (int i = 0; i < 0x900; i++)
+			if (q[i])
+				nz++;
+		if (nz > best_nz) {
+			best_nz = nz;
+			best = a;
+		}
+	}
+	return best ? best : XMARK_PHYS;
+}
+
 static void fill(uintptr_t dst, uint64_t n, uint8_t v)
 {
 	volatile uint8_t *p = (volatile uint8_t *)dst;
@@ -582,8 +613,16 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 	 * overwrites, so it has to be read before the copy. */
 	/* TEMPORARY: print the previous kernel's marks, then clear the page. */
 	{
-		volatile char *m = (volatile char *)(uintptr_t)XMARK_PHYS;
+		volatile char *m;
 		char line[80];
+
+		g_mark_phys = mark_page_find();
+		out("mkfind=");
+		hex((uint64_t)g_mark_phys);
+		out(" const=");
+		hex((uint64_t)XMARK_PHYS);
+		out("\n");
+		m = (volatile char *)(uintptr_t)g_mark_phys;
 		int n = 0;
 
 		/* arm_init's prologue stores x29/x30 at sp+0xc0, i.e. the last
@@ -592,14 +631,14 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 		 * zero the CPU never got there.  This does not depend on our
 		 * mark code at all. */
 		out("stk=");
-		hex(*(volatile uint64_t *)(uintptr_t)(XMARK_PHYS + 0x8000 - 0x10));
+		hex(*(volatile uint64_t *)(uintptr_t)(g_mark_phys + 0x8000 - 0x10));
 		out(",");
-		hex(*(volatile uint64_t *)(uintptr_t)(XMARK_PHYS + 0x8000 - 0x8));
+		hex(*(volatile uint64_t *)(uintptr_t)(g_mark_phys + 0x8000 - 0x8));
 		out("\n");
 		/* The previous run left its sequence number at the end of the
 		 * mark page (written after the segment copy, so it survives
 		 * until the next run reads it). */
-		g_run = *(volatile uint32_t *)(uintptr_t)(XMARK_PHYS + 0xf00);
+		g_run = *(volatile uint32_t *)(uintptr_t)(g_mark_phys + 0xf00);
 		kv("run", g_run);
 		out("\n");
 
@@ -668,7 +707,7 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 		 * list is the answer to "which stage was the last one".  0xfe is
 		 * the fault hook, 0xff/0xfd/... are not used by a stage. */
 		{
-			volatile uint8_t *b = (volatile uint8_t *)(uintptr_t)XMARK_PHYS;
+			volatile uint8_t *b = (volatile uint8_t *)(uintptr_t)g_mark_phys;
 			int n = 0;
 
 			out("mkbits:");
@@ -713,7 +752,7 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 			}
 			out("\n");
 		}
-		fill((uintptr_t)XMARK_PHYS, 0x1000, 0);
+		fill((uintptr_t)g_mark_phys, 0x1000, 0);
 	}
 
 	mark('3');
@@ -914,7 +953,7 @@ uint64_t ex_main(uintptr_t dtb, uint64_t el, uint64_t sctlr)
 
 	/* Hand the next run its sequence number (the copy above zeroed the
 	 * mark page). */
-	*(volatile uint32_t *)(uintptr_t)(XMARK_PHYS + 0xf00) = g_run + 1;
+	*(volatile uint32_t *)(uintptr_t)(g_mark_phys + 0xf00) = g_run + 1;
 	__asm__ volatile("dsb sy" ::: "memory");
 
 	mark('A');
